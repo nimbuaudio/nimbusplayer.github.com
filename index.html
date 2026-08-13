@@ -66,7 +66,7 @@
       <div class="flex justify-between items-center mb-6">
         <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Pistas disponibles</h2>
         <div class="flex gap-2">
-          <button onclick="clearLocalStorageAudios()" class="flex items-center gap-1.5 text-xs bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 px-3 py-1.5 rounded-lg border border-rose-800/40 transition" title="Limpiar pistas subidas guardadas en este navegador">
+          <button onclick="clearLocalStorageAudios()" class="flex items-center gap-1.5 text-xs bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 px-3 py-1.5 rounded-lg border border-rose-800/40 transition">
             <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Limpiar Guardados
           </button>
           <button onclick="loadHiveAudio()" class="flex items-center gap-2 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg border border-slate-700 transition">
@@ -131,7 +131,6 @@
       'https://hive-api.arcange.eu'
     ];
 
-    // Gateways de respaldo
     const IPFS_GATEWAYS = [
       'https://gateway.pinata.cloud/ipfs/',
       'https://ipfs.io/ipfs/',
@@ -143,6 +142,7 @@
     const AUDIO_EXTENSIONS = "mp3|wav|ogg|m4a|aac|flac|webm|opus|oga|weba|wma|m4b";
 
     let playlist = [];
+    let hiveTracks = [];
     let currentIndex = 0;
 
     const audio = document.getElementById('audioEngine');
@@ -152,15 +152,14 @@
 
     lucide.createIcons();
 
-    // --- MÓDULO LOCAL STORAGE (PERSISTENCIA AL REFRESCAR) ---
-    const STORAGE_KEY = 'nimbu_uploaded_tracks_v1';
+    // --- MÓDULO PERSISTENCIA (LOCAL STORAGE) ---
+    const STORAGE_KEY = 'nimbu_uploaded_tracks_v2';
 
     function getSavedLocalTracks() {
       try {
         const data = localStorage.getItem(STORAGE_KEY);
         return data ? JSON.parse(data) : [];
       } catch (e) {
-        console.error("Error al leer de localStorage", e);
         return [];
       }
     }
@@ -168,10 +167,8 @@
     function saveTrackLocally(track) {
       try {
         const currentTracks = getSavedLocalTracks();
-        // Evitar duplicados por ipfsHash
-        const exists = currentTracks.some(t => t.ipfsHash === track.ipfsHash);
+        const exists = currentTracks.some(t => t.ipfsHash === track.ipfsHash || t.streamUrl === track.streamUrl);
         if (!exists) {
-          // Guardar solo los metadatos necesarios (no guardar blobs binarios pesados)
           const trackToSave = {
             author: track.author,
             title: track.title,
@@ -183,15 +180,29 @@
           localStorage.setItem(STORAGE_KEY, JSON.stringify(currentTracks));
         }
       } catch (e) {
-        console.error("Error al guardar pista en localStorage", e);
+        console.error("Error al guardar en localStorage", e);
       }
     }
 
     function clearLocalStorageAudios() {
-      if (confirm("¿Deseas quitar los audios subidos que están guardados en este navegador?")) {
+      if (confirm("¿Limpiar los audios subidos que están guardados localmente?")) {
         localStorage.removeItem(STORAGE_KEY);
-        loadHiveAudio();
+        rebuildPlaylist();
       }
+    }
+
+    function rebuildPlaylist() {
+      const local = getSavedLocalTracks();
+      
+      // Combinar audios guardados + audios de Hive evitando duplicados
+      const combined = [...local];
+      hiveTracks.forEach(ht => {
+        const exists = combined.some(st => st.streamUrl === ht.streamUrl);
+        if (!exists) combined.push(ht);
+      });
+
+      playlist = combined;
+      renderPlaylist();
     }
 
     // --- MÓDULO 1: SUBIDA A IPFS ---
@@ -286,12 +297,11 @@
           isUserUploaded: true
         };
 
-        // Guardar en la memoria persistente
+        // Guardar permanentemente en LocalStorage
         saveTrackLocally(newTrack);
 
-        // Agregar a la lista actual de reproducción
-        playlist.unshift(newTrack);
-        renderPlaylist();
+        // Reconstruir lista manteniendo todo sincronizado
+        rebuildPlaylist();
 
         statusBox.innerHTML += `
           <div class="mt-3 p-3 bg-indigo-950 border border-indigo-800 rounded-lg text-slate-300 space-y-3">
@@ -312,7 +322,7 @@
       }
     }
 
-    // --- MÓDULO 2: LECTURA DE HIVE Y LISTA MANTENIDA ---
+    // --- MÓDULO 2: LECTURA DE HIVE ---
     function isDirectAudioUrl(url) {
       if (!url || typeof url !== 'string') return false;
       if (/youtube\.com|youtu\.be|3speak\.tv\/watch|soundcloud\.com/i.test(url)) return false;
@@ -355,11 +365,8 @@
     }
 
     async function loadHiveAudio() {
-      const feed = document.getElementById('feed');
-      feed.innerHTML = `<div class="col-span-full py-16 text-center text-slate-500 animate-pulse">Sintonizando la red Hive...</div>`;
-
-      // 1. Obtener canciones guardadas localmente
-      const savedTracks = getSavedLocalTracks();
+      // Mostrar primero las pistas locales mientras carga Hive
+      rebuildPlaylist();
 
       try {
         const requests = SEARCH_TAGS.map(tag => hiveRpcCall({
@@ -378,7 +385,7 @@
           }
         });
 
-        const remoteList = Array.from(postMap.values())
+        hiveTracks = Array.from(postMap.values())
           .map(post => ({
             author: post.author,
             title: post.title,
@@ -386,23 +393,10 @@
           }))
           .filter(item => !!item.streamUrl);
 
-        // 2. Unir audios locales + los de Hive eliminando duplicados
-        const combined = [...savedTracks];
-        remoteList.forEach(rt => {
-          const exists = combined.some(st => st.streamUrl === rt.streamUrl);
-          if (!exists) combined.push(rt);
-        });
-
-        playlist = combined;
-        renderPlaylist();
+        // Volver a combinar y renderizar
+        rebuildPlaylist();
       } catch (err) {
-        // En caso de falla de red, mostrar al menos las subidas locales
-        if (savedTracks.length > 0) {
-          playlist = savedTracks;
-          renderPlaylist();
-        } else {
-          feed.innerHTML = `<div class="col-span-full py-16 text-center text-rose-500">Error al consultar los nodos de Hive.</div>`;
-        }
+        console.warn("Fallo al descargar pistas remotas de Hive:", err);
       }
     }
 
@@ -414,8 +408,8 @@
       }
 
       feed.innerHTML = playlist.map((item, idx) => `
-        <article class="bg-slate-900 border ${item.isUserUploaded ? 'border-indigo-500/40' : 'border-slate-800'} rounded-xl p-4 flex flex-col justify-between hover:border-slate-700 transition relative">
-          ${item.isUserUploaded ? '<span class="absolute top-3 right-3 text-[9px] bg-indigo-500/20 text-indigo-300 font-mono px-2 py-0.5 rounded border border-indigo-500/30">Guardado</span>' : ''}
+        <article class="bg-slate-900 border ${item.isUserUploaded ? 'border-indigo-500/50' : 'border-slate-800'} rounded-xl p-4 flex flex-col justify-between hover:border-slate-700 transition relative">
+          ${item.isUserUploaded ? '<span class="absolute top-3 right-3 text-[9px] bg-indigo-500/20 text-indigo-300 font-mono px-2 py-0.5 rounded border border-indigo-500/30">Guardado Local</span>' : ''}
           <div>
             <span class="text-[10px] font-semibold uppercase tracking-wider text-indigo-400">@${item.author}</span>
             <h3 class="text-sm font-medium text-slate-200 mt-1 line-clamp-2 leading-snug">${item.title}</h3>
@@ -428,7 +422,7 @@
       lucide.createIcons();
     }
 
-    // --- MÓDULO 3: CONTROLES Y REPRODUCCIÓN (FIX AUDIO COMPLETO) ---
+    // --- MÓDULO 3: REPRODUCCIÓN ---
     async function playIndex(index) {
       if (!playlist[index]) return;
       currentIndex = index;
@@ -437,7 +431,7 @@
       playerTrackTitle.innerText = `⏳ Cargando: ${track.title}...`;
       playerTrackAuthor.innerText = `@${track.author}`;
 
-      // 1. Si es recién subido desde esta sesión, usar Blob local directo
+      // 1. Si se acaba de subir en esta misma pestaña, usar Blob inmediato
       if (track.localBlobUrl) {
         audio.src = track.localBlobUrl;
         audio.load();
@@ -451,20 +445,17 @@
         }
       }
 
-      // 2. Extraer Hash IPFS
+      // 2. Si no, descargar el archivo completo mediante Fetch Blob desde IPFS Gateways
       let hashMatch = track.streamUrl.match(/\/ipfs\/([a-zA-Z0-9]+)/);
       let ipfsHash = track.ipfsHash || (hashMatch ? hashMatch[1] : null);
 
       let playedSuccessfully = false;
 
-      // 3. Descarga previa del archivo completo (Pre-fetch Blob) para evitar cortes de buffering
       if (ipfsHash) {
         for (let gw of IPFS_GATEWAYS) {
           const testUrl = `${gw}${ipfsHash}`;
           try {
-            console.log("Descargando audio completo desde:", testUrl);
             const response = await fetch(testUrl);
-            
             if (response.ok) {
               const audioBlob = await response.blob();
               const fullAudioUrl = URL.createObjectURL(audioBlob);
@@ -476,15 +467,15 @@
               playerTrackTitle.innerText = track.title;
               updatePlayState(true);
               playedSuccessfully = true;
-              break; // Archivo completo cargado
+              break;
             }
           } catch (err) {
-            console.warn(`Gateway lento/falló: ${testUrl}`);
+            console.warn(`Gateway lento: ${testUrl}`);
           }
         }
       }
 
-      // 4. Intento directo tradicional si no se pudo descargar en Blob
+      // 3. Método directo de respaldo
       if (!playedSuccessfully) {
         try {
           audio.src = track.streamUrl;
@@ -531,7 +522,7 @@
 
     audio.onended = () => skipTrack(1);
 
-    // Inicializar al cargar la página
+    // Inicialización
     loadHiveAudio();
   </script>
 </body>
