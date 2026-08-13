@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Nimbu Audio - Web3 Player</title>
+  <title>Nimbu Audio - 3Speak & Web3 Engine</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
@@ -18,7 +18,7 @@
     <!-- Botones -->
     <div class="flex flex-wrap gap-2">
       <button onclick="fetch3SpeakAudio()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2">
-        <i data-lucide="play-circle" class="w-4 h-4"></i> Cargar de 3Speak
+        <i data-lucide="play-circle" class="w-4 h-4"></i> Cargar de 3Speak / Hive
       </button>
 
       <button onclick="importPinataFiles()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2">
@@ -28,7 +28,7 @@
 
     <!-- Lista de reproducción -->
     <div id="playlist" class="space-y-2">
-      <p id="statusMsg" class="text-slate-500 text-sm">Selecciona una opción para comenzar...</p>
+      <p id="statusMsg" class="text-slate-500 text-sm">Presiona "Cargar de 3Speak / Hive" para buscar pistas...</p>
     </div>
   </div>
 
@@ -55,82 +55,23 @@
     const playBtn = document.getElementById('mainPlayBtn');
     let hls = null;
 
-    const IPFS_GATEWAYS = ['https://gateway.pinata.cloud/ipfs/', 'https://ipfs.io/ipfs/'];
+    // Proxies y Gateways para evitar problemas de CORS
+    const CORS_PROXY = "https://api.allorigins.win/raw?url=";
+    const IPFS_GATEWAYS = ['https://ipfs.io/ipfs/', 'https://gateway.pinata.cloud/ipfs/', 'https://cloudflare-ipfs.com/ipfs/'];
 
-    // --- IMPORTAR DE PINATA (CORREGIDO) ---
-    async function importPinataFiles() {
-      const jwtPrompt = prompt("Ingresa tu Pinata JWT Token (Recomendado) o tu API Key:");
-      if (!jwtPrompt) return;
-
-      const input = jwtPrompt.trim();
-      let headers = {};
-
-      // Detectar si ingresó JWT (empieza por eyJ) o API Key tradicional
-      if (input.startsWith("eyJ")) {
-        headers = { "Authorization": `Bearer ${input}` };
-      } else {
-        const apiSecret = prompt("Ingresa tu Pinata API Secret:");
-        if (!apiSecret) return;
-        headers = {
-          "pinata_api_key": input,
-          "pinata_secret_api_key": apiSecret.trim()
-        };
-      }
-
-      document.getElementById('statusMsg').innerText = "Conectando con Pinata...";
-
-      try {
-        const response = await fetch("https://api.pinata.cloud/data/pinList?status=pinned&pageLimit=100", {
-          method: "GET",
-          headers: headers
-        });
-
-        if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          // Formatear el error para que NO salga [object Object]
-          const errorMessage = errData.error?.details || errData.error || JSON.stringify(errData) || `Código HTTP ${response.status}`;
-          throw new Error(errorMessage);
-        }
-
-        const data = await response.json();
-        
-        if (!data.rows || data.rows.length === 0) {
-          document.getElementById('statusMsg').innerText = "No se encontraron archivos alojados en tu cuenta de Pinata.";
-          return;
-        }
-
-        const pinataTracks = data.rows.map(item => ({
-          title: item.metadata?.name || item.ipfs_pin_hash,
-          author: "Tu Pinata",
-          url: `${IPFS_GATEWAYS[0]}${item.ipfs_pin_hash}`,
-          source: 'Pinata'
-        }));
-
-        pinataTracks.forEach(t => {
-          if (!playlist.some(p => p.url === t.url)) playlist.push(t);
-        });
-
-        renderList();
-        document.getElementById('statusMsg').innerText = `✓ Se importaron ${pinataTracks.length} archivos.`;
-
-      } catch (e) {
-        console.error("Detalle del error:", e);
-        alert(`❌ Error al conectar con Pinata:\n${e.message}\n\nAsegúrate de usar un 'JWT Bearer Token' generado en Pinata con permisos 'pinList'.`);
-        document.getElementById('statusMsg').innerText = "Error cargando desde Pinata.";
-      }
-    }
-
-    // --- CARGAR DE 3SPEAK ---
+    // --- CARGAR DE 3SPEAK & HIVE MUSIC ---
     async function fetch3SpeakAudio() {
-      document.getElementById('statusMsg').innerText = "Obteniendo datos de 3Speak / Hive...";
+      document.getElementById('statusMsg').innerText = "Buscando pistas en 3Speak y la comunidad de música de Hive...";
+      
       try {
+        // Consultamos tanto la etiqueta 3speak como la comunidad de música de Hive
         const response = await fetch('https://api.hive.blog', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             jsonrpc: "2.0",
             method: "condenser_api.get_discussions_by_created",
-            params: [{ tag: "3speak", limit: 30 }],
+            params: [{ tag: "music", limit: 40 }],
             id: 1
           })
         });
@@ -142,15 +83,27 @@
           try {
             const meta = JSON.parse(post.json_metadata || "{}");
             let mediaUrl = null;
+            let isHls = false;
 
-            if (meta.video?.info?.ipfs) {
-              mediaUrl = `${IPFS_GATEWAYS[1]}${meta.video.info.ipfs}`;
-            } else if (meta.video?.info?.file) {
-              const file = meta.video.info.file;
-              mediaUrl = file.startsWith('http') ? file : `https://encoder.3speak.tv/play?v=${post.author}/${file.replace('.m3u8','')}`;
-            } else {
+            // 1. Detección de video/audio en 3Speak (.m3u8 / IPFS)
+            if (meta.app && meta.app.includes('3speak')) {
+              if (meta.video?.info?.file) {
+                const file = meta.video.info.file;
+                const streamName = file.replace('.m3u8', '');
+                mediaUrl = `https://encoder.3speak.tv/play?v=${post.author}/${streamName}`;
+                isHls = true;
+              } else if (meta.video?.info?.ipfs) {
+                mediaUrl = `${IPFS_GATEWAYS[0]}${meta.video.info.ipfs}`;
+              }
+            }
+            
+            // 2. Búsqueda de audio embebido directo (MP3, WAV, OGG) en el post
+            if (!mediaUrl) {
               const match = post.body.match(/https?:\/\/[^\s"']+\.(mp3|wav|ogg|m3u8)/i);
-              if (match) mediaUrl = match[0];
+              if (match) {
+                mediaUrl = match[0];
+                if (mediaUrl.includes('.m3u8')) isHls = true;
+              }
             }
 
             if (mediaUrl) {
@@ -158,7 +111,8 @@
                 title: post.title,
                 author: "@" + post.author,
                 url: mediaUrl,
-                source: '3Speak'
+                isHls: isHls,
+                source: meta.app && meta.app.includes('3speak') ? '3Speak' : 'Hive Music'
               });
             }
           } catch (err) {}
@@ -169,16 +123,68 @@
             if (!playlist.some(p => p.url === t.url)) playlist.push(t);
           });
           renderList();
-          document.getElementById('statusMsg').innerText = `✓ Se cargaron ${extracted.length} audios de 3Speak.`;
+          document.getElementById('statusMsg').innerText = `✓ Se encontraron ${extracted.length} pistas disponibles.`;
         } else {
-          document.getElementById('statusMsg').innerText = "No se encontraron audios disponibles en 3Speak.";
+          document.getElementById('statusMsg').innerText = "No se encontraron enlaces de audio reproducibles en los posts recientes.";
         }
       } catch (e) {
-        document.getElementById('statusMsg').innerText = "Error al conectar con Hive.";
+        console.error(e);
+        document.getElementById('statusMsg').innerText = "Error de conexión con la blockchain de Hive.";
       }
     }
 
-    // --- RENDER & CONTROLES ---
+    // --- IMPORTAR DE PINATA ---
+    async function importPinataFiles() {
+      const jwtPrompt = prompt("Ingresa tu Pinata JWT Token:");
+      if (!jwtPrompt) return;
+
+      const input = jwtPrompt.trim();
+      let headers = input.startsWith("eyJ") 
+        ? { "Authorization": `Bearer ${input}` }
+        : { "pinata_api_key": input, "pinata_secret_api_key": (prompt("Ingresa tu Pinata API Secret:") || "").trim() };
+
+      document.getElementById('statusMsg').innerText = "Cargando catálogo de Pinata...";
+
+      try {
+        const response = await fetch("https://api.pinata.cloud/data/pinList?status=pinned&pageLimit=100", {
+          method: "GET",
+          headers: headers
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error?.details || errData.error || JSON.stringify(errData));
+        }
+
+        const data = await response.json();
+        
+        if (!data.rows || data.rows.length === 0) {
+          document.getElementById('statusMsg').innerText = "No se encontraron archivos en Pinata.";
+          return;
+        }
+
+        const pinataTracks = data.rows.map(item => ({
+          title: item.metadata?.name || item.ipfs_pin_hash,
+          author: "Tu Pinata IPFS",
+          url: `${IPFS_GATEWAYS[0]}${item.ipfs_pin_hash}`,
+          isHls: false,
+          source: 'Pinata'
+        }));
+
+        pinataTracks.forEach(t => {
+          if (!playlist.some(p => p.url === t.url)) playlist.push(t);
+        });
+
+        renderList();
+        document.getElementById('statusMsg').innerText = `✓ Se importaron ${pinataTracks.length} archivos de Pinata.`;
+
+      } catch (e) {
+        alert(`❌ Error en Pinata:\n${e.message}`);
+        document.getElementById('statusMsg').innerText = "Error al conectar con Pinata.";
+      }
+    }
+
+    // --- RENDERIZADO Y CONTROL ---
     function renderList() {
       const container = document.getElementById('playlist');
       if (playlist.length === 0) {
@@ -206,17 +212,36 @@
       document.getElementById('currentAuthor').innerText = `${track.source} • ${track.author}`;
 
       audio.onerror = () => {
-        document.getElementById('currentInfo').innerText = "❌ Error de reproducción en este enlace.";
+        document.getElementById('currentInfo').innerText = "❌ Bloqueo de CORS o servidor no disponible.";
         playBtn.innerHTML = '<i data-lucide="play"></i>';
       };
 
-      if (Hls.isSupported() && track.url.includes('.m3u8')) {
-        if (hls) hls.destroy();
-        hls = new Hls();
-        hls.loadSource(track.url);
-        hls.attachMedia(audio);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => audio.play());
-      } else {
+      // Si la pista requiere streaming HLS (3Speak)
+      if (track.isHls || track.url.includes('.m3u8')) {
+        if (Hls.isSupported()) {
+          if (hls) hls.destroy();
+          hls = new Hls({
+            // Habilitar CORS Bypass interno en HLS
+            xhrSetup: function (xhr, url) {
+              xhr.withCredentials = false;
+            }
+          });
+          hls.loadSource(track.url);
+          hls.attachMedia(audio);
+          hls.on(Hls.Events.MANIFEST_PARSED, () => audio.play());
+          hls.on(Hls.Events.ERROR, (evt, data) => {
+            if (data.fatal) {
+              // Si falla el origen de 3speak, probamos pasar la URL por un proxy CORS
+              hls.loadSource(CORS_PROXY + encodeURIComponent(track.url));
+            }
+          });
+        } else if (audio.canPlayType('application/vnd.apple.mpegurl')) {
+          audio.src = track.url;
+          await audio.play();
+        }
+      } 
+      // Audio estándar (MP3 / IPFS Directo)
+      else {
         if (hls) hls.destroy();
         audio.src = track.url;
         await audio.play();
