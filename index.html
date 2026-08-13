@@ -3,16 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Hive Sound Player - All Formats</title>
-  <!-- Tailwind CSS & Lucide Icons -->
+  <title>Nimbu - Local Audio Engine</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
   
   <style>
     body { font-family: 'Inter', sans-serif; background-color: #0b0f19; color: #e2e8f0; }
-    .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
     input[type=range] { accent-color: #6366f1; }
   </style>
 </head>
@@ -23,27 +20,39 @@
     <div class="max-w-5xl mx-auto flex justify-between items-center">
       <div class="flex items-center gap-3">
         <div class="p-2 bg-indigo-600/20 text-indigo-400 rounded-lg">
-          <i data-lucide="radio" class="w-5 h-5"></i>
+          <i data-lucide="upload-cloud" class="w-5 h-5"></i>
         </div>
-        <h1 class="font-extrabold text-lg tracking-wide text-white">Hive Audio Engine (Omni-Format)</h1>
+        <h1 class="font-extrabold text-lg tracking-wide text-white">Nimbu Studio Uploader</h1>
       </div>
-      <div id="connectionNode" class="text-xs text-slate-500 font-mono">Conectando...</div>
+      <div class="text-xs text-indigo-400 font-mono">Modo Local Activo</div>
     </div>
   </header>
 
   <!-- Panel Principal -->
   <main class="max-w-5xl mx-auto w-full px-6 py-8 flex-1">
-    <div class="flex justify-between items-center mb-6">
-      <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Pistas Encontradas (Todos los formatos)</h2>
-      <button onclick="loadHiveAudio()" class="flex items-center gap-2 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg border border-slate-700 transition">
-        <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Actualizar
-      </button>
+    
+    <!-- Zona de Subida de Archivos -->
+    <div class="bg-slate-900 border-2 border-dashed border-slate-700 hover:border-indigo-500 transition rounded-2xl p-8 text-center mb-8 relative">
+      <input type="file" id="audioFileInput" multiple accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac,.webm,.opus,.oga,.weba,.wma" 
+             class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="handleFiles(this.files)">
+      <div class="flex flex-col items-center pointer-events-none">
+        <div class="p-4 bg-indigo-600/10 text-indigo-400 rounded-full mb-3">
+          <i data-lucide="folder-plus" class="w-8 h-8"></i>
+        </div>
+        <h3 class="text-sm font-bold text-white mb-1">Arrastra tus audios aquí o haz clic para explorar</h3>
+        <p class="text-xs text-slate-400">Soporta MP3, WAV, FLAC, OGG, M4A, AAC, WEBM y más</p>
+      </div>
     </div>
 
-    <!-- Feed de Reproducción -->
+    <div class="flex justify-between items-center mb-6">
+      <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Tu Playlist Local</h2>
+      <span id="trackCount" class="text-xs bg-slate-800 text-slate-300 px-2.5 py-1 rounded-full">0 pistas</span>
+    </div>
+
+    <!-- Feed / Lista de Reproducción -->
     <div id="feed" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      <div id="loader" class="col-span-full py-16 text-center text-slate-500 animate-pulse">
-        Sintonizando frecuencias de la blockchain...
+      <div id="loader" class="col-span-full py-16 text-center text-slate-500">
+        Aún no hay archivos cargados. Sube algunos audios arriba para comenzar.
       </div>
     </div>
   </main>
@@ -59,7 +68,7 @@
         </div>
         <div class="truncate">
           <h4 id="trackTitle" class="text-xs font-bold text-white truncate">Selecciona una pista</h4>
-          <p id="trackAuthor" class="text-[10px] text-slate-400 truncate">Esperando interacción...</p>
+          <p id="trackAuthor" class="text-[10px] text-slate-400 truncate">Carga local</p>
         </div>
       </div>
 
@@ -90,19 +99,7 @@
   </footer>
 
   <script>
-    // Configuración General
-    const HIVE_NODES = [
-      'https://api.hive.blog',
-      'https://api.openhive.network',
-      'https://techcoderx.com',
-      'https://hive-api.arcange.eu'
-    ];
-    const SEARCH_TAGS = ["music", "audio", "podcast", "sound"];
-
-    // Lista ampliada con todos los formatos de audio conocidos compatibles con navegadores modernos
-    const AUDIO_EXTENSIONS = "mp3|wav|ogg|m4a|aac|flac|webm|opus|oga|weba|wma|m4b";
-
-    let playlist = [];
+    let localPlaylist = [];
     let currentIndex = 0;
     
     const audio = document.getElementById('audioEngine');
@@ -112,107 +109,34 @@
 
     lucide.createIcons();
 
-    // 1. Validador estricto con todos los formatos de audio conocidos
-    function isDirectAudioUrl(url) {
-      if (!url || typeof url !== 'string') return false;
-      if (/youtube\.com|youtu\.be|3speak\.tv\/watch|soundcloud\.com/i.test(url)) return false;
-      
-      const regexCheck = new RegExp(`\\.(${AUDIO_EXTENSIONS})(\\?.*)?$`, 'i');
-      return regexCheck.test(url);
-    }
-
-    // 2. Extractor multifase adaptable a cualquier formato de audio
-    function extractAudioFromPost(post) {
-      // Fase A: Regex dinámico basado en todos los formatos conocidos
-      const regex = new RegExp(`(https?:\\/\\/[^\\s"']+\\.(${AUDIO_EXTENSIONS})(\\?[^\\s"']*)?)`, 'gi');
-      const bodyMatches = post.body ? post.body.match(regex) : null;
-      if (bodyMatches) {
-        const direct = bodyMatches.find(l => isDirectAudioUrl(l));
-        if (direct) return direct;
-      }
-
-      // Fase B: Metadatos JSON
-      let meta = {};
-      try { meta = typeof post.json_metadata === 'string' ? JSON.parse(post.json_metadata || '{}') : post.json_metadata; } catch(e) {}
-      
-      if (isDirectAudioUrl(meta?.audio)) return meta.audio;
-      if (isDirectAudioUrl(meta?.music)) return meta.music;
-      if (Array.isArray(meta?.links)) {
-        const found = meta.links.find(l => isDirectAudioUrl(l));
-        if (found) return found;
-      }
-
-      return null;
-    }
-
-    // 3. Cliente RPC resiliente
-    async function hiveRpcCall(body) {
-      for (const node of HIVE_NODES) {
-        try {
-          const res = await fetch(node, {
-            method: 'POST',
-            body: JSON.stringify(body),
-            headers: { 'Content-Type': 'application/json' }
-          });
-          if (res.ok) {
-            document.getElementById('connectionNode').innerText = new URL(node).hostname;
-            return await res.json();
-          }
-        } catch (e) {
-          console.warn(`Nodo fallido: ${node}`);
-        }
-      }
-      throw new Error("Sin respuesta de los nodos Hive.");
-    }
-
-    // 4. Carga y filtrado de contenido
-    async function loadHiveAudio() {
-      const feed = document.getElementById('feed');
-      feed.innerHTML = `<div class="col-span-full py-16 text-center text-slate-500 animate-pulse">Buscando audios (mp3, wav, flac, ogg, etc.) en Hive...</div>`;
-
-      try {
-        const requests = SEARCH_TAGS.map(tag => hiveRpcCall({
-          jsonrpc: "2.0",
-          method: "condenser_api.get_discussions_by_created",
-          params: [{ tag, limit: 25 }],
-          id: 1
-        }));
-
-        const results = await Promise.allSettled(requests);
-        const postMap = new Map();
-
-        results.forEach(res => {
-          if (res.status === 'fulfilled' && res.value?.result) {
-            res.value.result.forEach(p => postMap.set(p.permlink, p));
-          }
+    function handleFiles(files) {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        // Crear una URL local segura (Blob URL) para reproducir el archivo de tu equipo
+        const blobUrl = URL.createObjectURL(file);
+        
+        localPlaylist.push({
+          title: file.name.replace(/\.[^/.]+$/, ""), // Nombre sin extensión
+          size: (file.size / (1024*1024)).toFixed(2) + " MB",
+          streamUrl: blobUrl
         });
+      }
 
-        playlist = Array.from(postMap.values())
-          .map(post => ({
-            author: post.author,
-            title: post.title,
-            permlink: post.permlink,
-            streamUrl: extractAudioFromPost(post)
-          }))
-          .filter(item => !!item.streamUrl);
-
-        if (playlist.length === 0) {
-          feed.innerHTML = `<div class="col-span-full py-16 text-center text-slate-500">No se encontraron archivos de sonido compatibles con los formatos ampliados.</div>`;
-        } else {
-          renderPlaylist();
-        }
-      } catch (err) {
-        feed.innerHTML = `<div class="col-span-full py-16 text-center text-rose-500">Error de red. Intenta nuevamente.</div>`;
+      document.getElementById('trackCount').innerText = `${localPlaylist.length} pistas`;
+      renderPlaylist();
+      
+      // Si no hay nada reproduciéndose, arrancar con el primero subido
+      if (localPlaylist.length > 0 && audio.paused && !audio.src) {
+        playIndex(localPlaylist.length - files.length);
       }
     }
 
-    // 5. Renderizado
     function renderPlaylist() {
       const feed = document.getElementById('feed');
-      feed.innerHTML = playlist.map((item, idx) => `
+      feed.innerHTML = localPlaylist.map((item, idx) => `
         <article class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col justify-between hover:border-slate-700 transition">
           <div>
-            <span class="text-[10px] font-semibold uppercase tracking-wider text-indigo-400">@${item.author}</span>
+            <span class="text-[10px] font-semibold uppercase tracking-wider text-indigo-400">Archivo Local (${item.size})</span>
             <h3 class="text-sm font-medium text-slate-200 mt-1 line-clamp-2 leading-snug">${item.title}</h3>
           </div>
           <button onclick="playIndex(${idx})" class="mt-4 w-full py-2 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-2">
@@ -223,26 +147,25 @@
       lucide.createIcons();
     }
 
-    // 6. Controles del Reproductor
     function playIndex(index) {
-      if (!playlist[index]) return;
+      if (!localPlaylist[index]) return;
       currentIndex = index;
-      const track = playlist[currentIndex];
+      const track = localPlaylist[currentIndex];
 
       audio.src = track.streamUrl;
       trackTitle.innerText = track.title;
-      trackAuthor.innerText = `@${track.author}`;
+      trackAuthor.innerText = "Local Upload";
 
       audio.play().then(() => {
         updatePlayState(true);
       }).catch(e => {
-        console.warn("Autoplay prevenido por el navegador. Interacción requerida.", e);
+        console.warn("Interacción requerida para reproducir:", e);
         updatePlayState(false);
       });
     }
 
     function togglePlayPause() {
-      if (!audio.src && playlist.length > 0) {
+      if (!audio.src && localPlaylist.length > 0) {
         playIndex(0);
         return;
       }
@@ -256,14 +179,14 @@
     }
 
     function skipTrack(step) {
-      if (playlist.length === 0) return;
-      currentIndex = (currentIndex + step + playlist.length) % playlist.length;
+      if (localPlaylist.length === 0) return;
+      currentIndex = (currentIndex + step + localPlaylist.length) % localPlaylist.length;
       playIndex(currentIndex);
     }
 
     function playRandomTrack() {
-      if (playlist.length === 0) return;
-      currentIndex = Math.floor(Math.random() * playlist.length);
+      if (localPlaylist.length === 0) return;
+      currentIndex = Math.floor(Math.random() * localPlaylist.length);
       playIndex(currentIndex);
     }
 
@@ -278,17 +201,7 @@
       lucide.createIcons();
     }
 
-    // 7. Eventos de Recuperación de Errores
-    audio.onerror = () => {
-      console.error("Error al cargar la pista:", audio.src);
-      trackTitle.innerText = "⚠️ Formato no soportado o enlace caído. Saltando...";
-      setTimeout(() => skipTrack(1), 1500);
-    };
-
     audio.onended = () => skipTrack(1);
-
-    // Inicialización
-    loadHiveAudio();
   </script>
 </body>
 </html>
