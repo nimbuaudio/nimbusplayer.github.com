@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Nimbu Audio - 3Speak & Pinata IPFS</title>
+  <title>Nimbu Audio - Web3 Player</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
@@ -15,7 +15,7 @@
       <i data-lucide="radio" class="text-indigo-500"></i> Nimbu Web3 Player
     </h1>
 
-    <!-- Botones de Fuentes -->
+    <!-- Botones -->
     <div class="flex flex-wrap gap-2">
       <button onclick="fetch3SpeakAudio()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2">
         <i data-lucide="play-circle" class="w-4 h-4"></i> Cargar de 3Speak
@@ -28,11 +28,11 @@
 
     <!-- Lista de reproducción -->
     <div id="playlist" class="space-y-2">
-      <p id="statusMsg" class="text-slate-500 text-sm">Haz clic en "Importar de Pinata" o "Cargar de 3Speak"...</p>
+      <p id="statusMsg" class="text-slate-500 text-sm">Selecciona una opción para comenzar...</p>
     </div>
   </div>
 
-  <!-- Reproductor Fijo -->
+  <!-- Player Fijo -->
   <footer class="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 p-4 backdrop-blur-md z-50">
     <div class="max-w-3xl mx-auto flex items-center justify-between">
       <div class="w-1/2">
@@ -55,32 +55,31 @@
     const playBtn = document.getElementById('mainPlayBtn');
     let hls = null;
 
-    // --- IMPORTAR DESDE PINATA CON SOPORTE JWT Y API KEYS ---
-    async function importPinataFiles() {
-      const authType = confirm("¿Quieres usar tu JWT Token de Pinata? (Recomendado)\n\n• Haz clic en [Aceptar] para usar JWT Token.\n• Haz clic en [Cancelar] para ingresar API Key y Secret.");
+    const IPFS_GATEWAYS = ['https://gateway.pinata.cloud/ipfs/', 'https://ipfs.io/ipfs/'];
 
+    // --- IMPORTAR DE PINATA (CORREGIDO) ---
+    async function importPinataFiles() {
+      const jwtPrompt = prompt("Ingresa tu Pinata JWT Token (Recomendado) o tu API Key:");
+      if (!jwtPrompt) return;
+
+      const input = jwtPrompt.trim();
       let headers = {};
 
-      if (authType) {
-        const jwt = prompt("Pega tu Pinata JWT Bearer Token:");
-        if (!jwt) return;
-        headers = {
-          "Authorization": `Bearer ${jwt.replace('Bearer ', '').trim()}`
-        };
+      // Detectar si ingresó JWT (empieza por eyJ) o API Key tradicional
+      if (input.startsWith("eyJ")) {
+        headers = { "Authorization": `Bearer ${input}` };
       } else {
-        const apiKey = prompt("Ingresa tu Pinata API Key:");
         const apiSecret = prompt("Ingresa tu Pinata API Secret:");
-        if (!apiKey || !apiSecret) return;
+        if (!apiSecret) return;
         headers = {
-          "pinata_api_key": apiKey.trim(),
+          "pinata_api_key": input,
           "pinata_secret_api_key": apiSecret.trim()
         };
       }
 
-      document.getElementById('statusMsg').innerText = "Consultando catálogo en Pinata...";
+      document.getElementById('statusMsg').innerText = "Conectando con Pinata...";
 
       try {
-        // Intentamos listar los archivos pinedos
         const response = await fetch("https://api.pinata.cloud/data/pinList?status=pinned&pageLimit=100", {
           method: "GET",
           headers: headers
@@ -88,48 +87,42 @@
 
         if (!response.ok) {
           const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.error || `Error HTTP: ${response.status}`);
+          // Formatear el error para que NO salga [object Object]
+          const errorMessage = errData.error?.details || errData.error || JSON.stringify(errData) || `Código HTTP ${response.status}`;
+          throw new Error(errorMessage);
         }
 
         const data = await response.json();
         
         if (!data.rows || data.rows.length === 0) {
-          document.getElementById('statusMsg').innerText = "No se encontraron archivos en esta cuenta de Pinata.";
+          document.getElementById('statusMsg').innerText = "No se encontraron archivos alojados en tu cuenta de Pinata.";
           return;
         }
 
-        // Filtramos y preparamos las pistas
-        const pinataTracks = data.rows.map(item => {
-          const fileName = item.metadata?.name || item.ipfs_pin_hash;
-          return {
-            title: fileName,
-            author: "Tu Pinata IPFS",
-            url: `https://gateway.pinata.cloud/ipfs/${item.ipfs_pin_hash}`,
-            source: 'Pinata',
-            hash: item.ipfs_pin_hash
-          };
-        });
+        const pinataTracks = data.rows.map(item => ({
+          title: item.metadata?.name || item.ipfs_pin_hash,
+          author: "Tu Pinata",
+          url: `${IPFS_GATEWAYS[0]}${item.ipfs_pin_hash}`,
+          source: 'Pinata'
+        }));
 
-        // Combinamos la lista para evitar duplicados
-        pinataTracks.forEach(track => {
-          if (!playlist.some(p => p.url === track.url)) {
-            playlist.push(track);
-          }
+        pinataTracks.forEach(t => {
+          if (!playlist.some(p => p.url === t.url)) playlist.push(t);
         });
 
         renderList();
-        document.getElementById('statusMsg').innerText = `✓ Se importaron ${pinataTracks.length} archivos desde Pinata.`;
+        document.getElementById('statusMsg').innerText = `✓ Se importaron ${pinataTracks.length} archivos.`;
 
       } catch (e) {
-        console.error("Error Pinata:", e);
-        alert(`❌ Error al conectar con Pinata: ${e.message}\n\nVerifica que tus credenciales tengan permisos de lectura (pinList).`);
-        document.getElementById('statusMsg').innerText = "Error importando de Pinata.";
+        console.error("Detalle del error:", e);
+        alert(`❌ Error al conectar con Pinata:\n${e.message}\n\nAsegúrate de usar un 'JWT Bearer Token' generado en Pinata con permisos 'pinList'.`);
+        document.getElementById('statusMsg').innerText = "Error cargando desde Pinata.";
       }
     }
 
     // --- CARGAR DE 3SPEAK ---
     async function fetch3SpeakAudio() {
-      document.getElementById('statusMsg').innerText = "Conectando con 3Speak / Hive...";
+      document.getElementById('statusMsg').innerText = "Obteniendo datos de 3Speak / Hive...";
       try {
         const response = await fetch('https://api.hive.blog', {
           method: 'POST',
@@ -137,52 +130,55 @@
           body: JSON.stringify({
             jsonrpc: "2.0",
             method: "condenser_api.get_discussions_by_created",
-            params: [{ tag: "3speak", limit: 20 }],
+            params: [{ tag: "3speak", limit: 30 }],
             id: 1
           })
         });
 
         const { result } = await response.json();
-        const imported3Speak = [];
+        const extracted = [];
 
         result.forEach(post => {
           try {
             const meta = JSON.parse(post.json_metadata || "{}");
-            if (meta.app && meta.app.includes('3speak')) {
-              let streamUrl = null;
-              if (meta.video && meta.video.info && meta.video.info.file) {
-                const permlink = meta.video.info.file.replace('.m3u8', '');
-                streamUrl = `https://encoder.3speak.tv/play?v=${post.author}/${permlink}`;
-              } else if (meta.video && meta.video.info && meta.video.info.ipfs) {
-                streamUrl = `https://ipfs.3speak.tv/ipfs/${meta.video.info.ipfs}`;
-              }
+            let mediaUrl = null;
 
-              if (streamUrl) {
-                imported3Speak.push({
-                  title: post.title,
-                  author: "@" + post.author,
-                  url: streamUrl,
-                  source: '3Speak'
-                });
-              }
+            if (meta.video?.info?.ipfs) {
+              mediaUrl = `${IPFS_GATEWAYS[1]}${meta.video.info.ipfs}`;
+            } else if (meta.video?.info?.file) {
+              const file = meta.video.info.file;
+              mediaUrl = file.startsWith('http') ? file : `https://encoder.3speak.tv/play?v=${post.author}/${file.replace('.m3u8','')}`;
+            } else {
+              const match = post.body.match(/https?:\/\/[^\s"']+\.(mp3|wav|ogg|m3u8)/i);
+              if (match) mediaUrl = match[0];
+            }
+
+            if (mediaUrl) {
+              extracted.push({
+                title: post.title,
+                author: "@" + post.author,
+                url: mediaUrl,
+                source: '3Speak'
+              });
             }
           } catch (err) {}
         });
 
-        if (imported3Speak.length > 0) {
-          imported3Speak.forEach(t => {
+        if (extracted.length > 0) {
+          extracted.forEach(t => {
             if (!playlist.some(p => p.url === t.url)) playlist.push(t);
           });
           renderList();
+          document.getElementById('statusMsg').innerText = `✓ Se cargaron ${extracted.length} audios de 3Speak.`;
         } else {
-          document.getElementById('statusMsg').innerText = "No se encontraron audios en 3Speak.";
+          document.getElementById('statusMsg').innerText = "No se encontraron audios disponibles en 3Speak.";
         }
       } catch (e) {
-        document.getElementById('statusMsg').innerText = "Error consultando los servidores de Hive.";
+        document.getElementById('statusMsg').innerText = "Error al conectar con Hive.";
       }
     }
 
-    // --- RENDERIZADO ---
+    // --- RENDER & CONTROLES ---
     function renderList() {
       const container = document.getElementById('playlist');
       if (playlist.length === 0) {
@@ -203,12 +199,16 @@
       `).join('');
     }
 
-    // --- REPRODUCCIÓN ---
     async function playTrack(i) {
       curIdx = i;
       const track = playlist[i];
       document.getElementById('currentInfo').innerText = track.title;
       document.getElementById('currentAuthor').innerText = `${track.source} • ${track.author}`;
+
+      audio.onerror = () => {
+        document.getElementById('currentInfo').innerText = "❌ Error de reproducción en este enlace.";
+        playBtn.innerHTML = '<i data-lucide="play"></i>';
+      };
 
       if (Hls.isSupported() && track.url.includes('.m3u8')) {
         if (hls) hls.destroy();
@@ -227,20 +227,14 @@
     }
 
     function togglePlay() {
-      if (audio.paused) { 
-        audio.play(); 
-        playBtn.innerHTML = '<i data-lucide="pause"></i>'; 
-      } else { 
-        audio.pause(); 
-        playBtn.innerHTML = '<i data-lucide="play"></i>'; 
-      }
+      if (audio.paused) { audio.play(); playBtn.innerHTML = '<i data-lucide="pause"></i>'; }
+      else { audio.pause(); playBtn.innerHTML = '<i data-lucide="play"></i>'; }
       lucide.createIcons();
     }
 
     function skip(s) { 
       if (playlist.length === 0) return;
-      let next = (curIdx + s + playlist.length) % playlist.length;
-      playTrack(next);
+      playTrack((curIdx + s + playlist.length) % playlist.length);
     }
 
     lucide.createIcons();
