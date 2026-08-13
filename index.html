@@ -114,7 +114,7 @@
       </div>
 
     </div>
-    <audio id="audioEngine" crossorigin="anonymous"></audio>
+    <audio id="audioEngine"></audio>
   </footer>
 
   <script>
@@ -125,6 +125,15 @@
       'https://techcoderx.com',
       'https://hive-api.arcange.eu'
     ];
+
+    // Gateways de respaldo
+    const IPFS_GATEWAYS = [
+      'https://gateway.pinata.cloud/ipfs/',
+      'https://ipfs.io/ipfs/',
+      'https://dweb.link/ipfs/',
+      'https://cloudflare-ipfs.com/ipfs/'
+    ];
+
     const SEARCH_TAGS = ["music", "audio", "podcast", "sound"];
     const AUDIO_EXTENSIONS = "mp3|wav|ogg|m4a|aac|flac|webm|opus|oga|weba|wma|m4b";
 
@@ -158,8 +167,10 @@
       }
 
       const data = await response.json();
-      // Usamos ipfs.io para optimizar la compatibilidad en reproducciones directas
-      return `https://ipfs.io/ipfs/${data.IpfsHash}`;
+      return {
+        ipfsHash: data.IpfsHash,
+        pinataUrl: `https://gateway.pinata.cloud/ipfs/${data.IpfsHash}`
+      };
     }
 
     async function uploadMetadataToIPFS(audioUrl, title, artist, apiKey, apiSecret) {
@@ -186,7 +197,7 @@
 
       if (!response.ok) throw new Error("Fallo en la subida de los metadatos JSON.");
       const data = await response.json();
-      return `https://ipfs.io/ipfs/${data.IpfsHash}`;
+      return `https://gateway.pinata.cloud/ipfs/${data.IpfsHash}`;
     }
 
     async function handleUploadProcess() {
@@ -201,11 +212,19 @@
       if (!apiKey || !apiSecret) return alert("Se requieren las claves API de Pinata.");
       if (!title || !artist || !fileInput.files[0]) return alert("Completa el título, autor y archivo.");
 
+      const selectedFile = fileInput.files[0];
+
+      // Creamos una URL de Blob local del archivo subido para reproducción instantánea
+      const localAudioBlobUrl = URL.createObjectURL(selectedFile);
+
       statusBox.classList.remove('hidden');
       statusBox.innerHTML = `<p class="text-amber-400">⏳ Conectando con IPFS y subiendo audio...</p>`;
 
       try {
-        const audioUrl = await uploadAudioToIPFS(fileInput.files[0], apiKey, apiSecret);
+        const uploadResult = await uploadAudioToIPFS(selectedFile, apiKey, apiSecret);
+        const ipfsHash = uploadResult.ipfsHash;
+        const audioUrl = uploadResult.pinataUrl;
+
         statusBox.innerHTML += `<p class="text-emerald-400">✓ Audio alojado en IPFS: <a href="${audioUrl}" target="_blank" class="underline font-bold">${audioUrl}</a></p>`;
         
         statusBox.innerHTML += `<p class="text-amber-400">⏳ Creando metadatos JSON...</p>`;
@@ -214,16 +233,21 @@
         statusBox.innerHTML += `<p class="text-emerald-400">✓ JSON listo: <a href="${metadataUrl}" target="_blank" class="underline font-bold">${metadataUrl}</a></p>`;
         
         // Agregar a la lista para reproducción
-        playlist.unshift({ author: artist, title: title, streamUrl: audioUrl });
+        playlist.unshift({
+          author: artist,
+          title: title,
+          streamUrl: audioUrl,
+          ipfsHash: ipfsHash,
+          localBlobUrl: localAudioBlobUrl
+        });
         renderPlaylist();
 
-        // Botón explícito de reproducción para evitar bloqueo de auto-play del navegador
         statusBox.innerHTML += `
           <div class="mt-3 p-3 bg-indigo-950 border border-indigo-800 rounded-lg text-slate-300 space-y-3">
             <div>
-              <p class="font-bold text-white mb-1">¡Audio Listo!</p>
-              <p>Copia este enlace para pegarlo en tu post de Hive:</p>
-              <input readonly value="${audioUrl}" class="w-full bg-slate-900 border border-slate-700 rounded p-1.5 mt-1 text-[11px] text-indigo-300 font-mono">
+              <p class="font-bold text-white mb-1">¡Audio Subido Exitosamente!</p>
+              <p class="text-xs text-slate-400 mb-1">Enlace para tu post de Hive:</p>
+              <input readonly value="${audioUrl}" class="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-[11px] text-indigo-300 font-mono">
             </div>
             <button onclick="playIndex(0)" class="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition flex items-center justify-center gap-2">
               <i data-lucide="play-circle" class="w-4 h-4"></i> ▶️ Escuchar Pista Subida
@@ -237,7 +261,7 @@
       }
     }
 
-    // --- MÓDULO 2: LECTURA Y REPRODUCCIÓN DE HIVE ---
+    // --- MÓDULO 2: LECTURA DE HIVE ---
     function isDirectAudioUrl(url) {
       if (!url || typeof url !== 'string') return false;
       if (/youtube\.com|youtu\.be|3speak\.tv\/watch|soundcloud\.com/i.test(url)) return false;
@@ -336,22 +360,80 @@
       lucide.createIcons();
     }
 
-    // --- MÓDULO 3: CONTROLES DE REPRODUCCIÓN ---
-    function playIndex(index) {
+    // --- MÓDULO 3: CONTROLES Y REPRODUCCIÓN (FIX AUDIO COMPLETO) ---
+    async function playIndex(index) {
       if (!playlist[index]) return;
       currentIndex = index;
       const track = playlist[currentIndex];
 
-      audio.src = track.streamUrl;
-      playerTrackTitle.innerText = track.title;
+      playerTrackTitle.innerText = `⏳ Cargando: ${track.title}...`;
       playerTrackAuthor.innerText = `@${track.author}`;
 
-      audio.play().then(() => {
-        updatePlayState(true);
-      }).catch(e => {
-        console.warn("Autoplay bloqueado por el navegador:", e);
+      // 1. Si es recién subido desde esta sesión, usar Blob local (Audio 100% Instantáneo y Completo)
+      if (track.localBlobUrl) {
+        audio.src = track.localBlobUrl;
+        audio.load();
+        try {
+          await audio.play();
+          playerTrackTitle.innerText = track.title;
+          updatePlayState(true);
+          return;
+        } catch (e) {
+          console.warn("Error en reproducción local:", e);
+        }
+      }
+
+      // 2. Extraer Hash IPFS
+      let hashMatch = track.streamUrl.match(/\/ipfs\/([a-zA-Z0-9]+)/);
+      let ipfsHash = hashMatch ? hashMatch[1] : null;
+
+      let playedSuccessfully = false;
+
+      // 3. Descarga previa del archivo completo (Pre-fetch Blob) para evitar cortes de buffering
+      if (ipfsHash) {
+        for (let gw of IPFS_GATEWAYS) {
+          const testUrl = `${gw}${ipfsHash}`;
+          try {
+            console.log("Descargando audio completo desde:", testUrl);
+            const response = await fetch(testUrl);
+            
+            if (response.ok) {
+              const audioBlob = await response.blob();
+              const fullAudioUrl = URL.createObjectURL(audioBlob);
+              
+              audio.src = fullAudioUrl;
+              audio.load();
+              await audio.play();
+              
+              playerTrackTitle.innerText = track.title;
+              updatePlayState(true);
+              playedSuccessfully = true;
+              break; // Archivo completo cargado
+            }
+          } catch (err) {
+            console.warn(`Gateway lento/falló: ${testUrl}`);
+          }
+        }
+      }
+
+      // 4. Intento directo tradicional si no se pudo descargar en Blob
+      if (!playedSuccessfully) {
+        try {
+          audio.src = track.streamUrl;
+          audio.load();
+          await audio.play();
+          playerTrackTitle.innerText = track.title;
+          updatePlayState(true);
+          playedSuccessfully = true;
+        } catch (e) {
+          console.error("Fallo final de reproducción:", e);
+        }
+      }
+
+      if (!playedSuccessfully) {
+        playerTrackTitle.innerText = "⚠️ Error al cargar el audio de IPFS";
         updatePlayState(false);
-      });
+      }
     }
 
     function togglePlayPause() {
@@ -378,11 +460,6 @@
       playBtn.innerHTML = isPlaying ? '<i data-lucide="pause" class="w-5 h-5"></i>' : '<i data-lucide="play" class="w-5 h-5"></i>';
       lucide.createIcons();
     }
-
-    audio.onerror = () => {
-      playerTrackTitle.innerText = "⚠️ Error de reproducción. Saltando...";
-      setTimeout(() => skipTrack(1), 1500);
-    };
 
     audio.onended = () => skipTrack(1);
 
