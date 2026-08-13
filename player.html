@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hive Sound Player</title>
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  
+  <style>
+    body { font-family: 'Inter', sans-serif; background-color: #0b0f19; color: #e2e8f0; }
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    input[type=range] { accent-color: #6366f1; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col pb-32">
+
+  <!-- Encabezado -->
+  <header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md sticky top-0 z-30 px-6 py-4">
+    <div class="max-w-5xl mx-auto flex justify-between items-center">
+      <div class="flex items-center gap-3">
+        <div class="p-2 bg-indigo-600/20 text-indigo-400 rounded-lg">
+          <i data-lucide="radio" class="w-5 h-5"></i>
+        </div>
+        <h1 class="font-extrabold text-lg tracking-wide text-white">Hive Audio Engine</h1>
+      </div>
+      <div id="connectionNode" class="text-xs text-slate-500 font-mono">Conectando...</div>
+    </div>
+  </header>
+
+  <!-- Panel Principal -->
+  <main class="max-w-5xl mx-auto w-full px-6 py-8 flex-1">
+    <div class="flex justify-between items-center mb-6">
+      <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Pistas Encontradas</h2>
+      <button onclick="loadHiveAudio()" class="flex items-center gap-2 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg border border-slate-700 transition">
+        <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Actualizar
+      </button>
+    </div>
+
+    <!-- Feed de Reproducción -->
+    <div id="feed" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div id="loader" class="col-span-full py-16 text-center text-slate-500 animate-pulse">
+        Sintonizando frecuencias de la blockchain...
+      </div>
+    </div>
+  </main>
+
+  <!-- Reproductor Flotante Inferior -->
+  <footer class="fixed bottom-0 left-0 right-0 bg-slate-900/95 border-t border-slate-800 p-4 backdrop-blur-md z-40">
+    <div class="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+      
+      <!-- Detalle de la pista -->
+      <div class="flex items-center gap-3 w-full sm:w-1/3 truncate">
+        <div class="p-2.5 bg-indigo-950 text-indigo-400 border border-indigo-800/40 rounded-xl shrink-0">
+          <i data-lucide="music" class="w-5 h-5"></i>
+        </div>
+        <div class="truncate">
+          <h4 id="trackTitle" class="text-xs font-bold text-white truncate">Selecciona una pista</h4>
+          <p id="trackAuthor" class="text-[10px] text-slate-400 truncate">Esperando interacción...</p>
+        </div>
+      </div>
+
+      <!-- Controles de Audio -->
+      <div class="flex items-center gap-4">
+        <button onclick="playRandomTrack()" class="text-slate-400 hover:text-white transition" title="Aleatorio">
+          <i data-lucide="shuffle" class="w-4 h-4"></i>
+        </button>
+        <button onclick="skipTrack(-1)" class="text-slate-300 hover:text-white transition">
+          <i data-lucide="skip-back" class="w-5 h-5"></i>
+        </button>
+        <button id="playBtn" onclick="togglePlayPause()" class="p-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full transition shadow-lg shadow-indigo-600/30">
+          <i data-lucide="play" class="w-5 h-5"></i>
+        </button>
+        <button onclick="skipTrack(1)" class="text-slate-300 hover:text-white transition">
+          <i data-lucide="skip-forward" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Control de Volumen -->
+      <div class="hidden sm:flex items-center gap-2 w-1/4 justify-end">
+        <i data-lucide="volume-2" class="w-4 h-4 text-slate-400"></i>
+        <input type="range" min="0" max="1" step="0.05" value="1" oninput="setVolume(this.value)" class="w-20">
+      </div>
+
+    </div>
+    <audio id="audioEngine"></audio>
+  </footer>
+
+  <script>
+    // Configuración General
+    const HIVE_NODES = [
+      'https://api.hive.blog',
+      'https://api.openhive.network',
+      'https://techcoderx.com',
+      'https://hive-api.arcange.eu'
+    ];
+    const SEARCH_TAGS = ["music", "audio", "podcast", "sound"];
+
+    let playlist = [];
+    let currentIndex = 0;
+    
+    const audio = document.getElementById('audioEngine');
+    const playBtn = document.getElementById('playBtn');
+    const trackTitle = document.getElementById('trackTitle');
+    const trackAuthor = document.getElementById('trackAuthor');
+
+    lucide.createIcons();
+
+    // 1. Validador estricto de URLs directas de audio
+    function isDirectAudioUrl(url) {
+      if (!url || typeof url !== 'string') return false;
+      if (/youtube\.com|youtu\.be|3speak\.tv\/watch|soundcloud\.com/i.test(url)) return false;
+      return /\.(mp3|wav|ogg|m4a|aac)(\?.*)?$/i.test(url);
+    }
+
+    // 2. Extractor multifase de audio en un post
+    function extractAudioFromPost(post) {
+      // Fase A: Regex en el cuerpo
+      const regex = /(https?:\/\/[^\s"']+\.(mp3|wav|ogg|m4a|aac)(\?[^\s"']*)?)/gi;
+      const bodyMatches = post.body ? post.body.match(regex) : null;
+      if (bodyMatches) {
+        const direct = bodyMatches.find(l => isDirectAudioUrl(l));
+        if (direct) return direct;
+      }
+
+      // Fase B: Metadatos JSON
+      let meta = {};
+      try { meta = typeof post.json_metadata === 'string' ? JSON.parse(post.json_metadata || '{}') : post.json_metadata; } catch(e) {}
+      
+      if (isDirectAudioUrl(meta?.audio)) return meta.audio;
+      if (isDirectAudioUrl(meta?.music)) return meta.music;
+      if (Array.isArray(meta?.links)) {
+        const found = meta.links.find(l => isDirectAudioUrl(l));
+        if (found) return found;
+      }
+
+      return null;
+    }
+
+    // 3. Cliente RPC resiliente
+    async function hiveRpcCall(body) {
+      for (const node of HIVE_NODES) {
+        try {
+          const res = await fetch(node, {
+            method: 'POST',
+            body: JSON.stringify(body),
+            headers: { 'Content-Type': 'application/json' }
+          });
+          if (res.ok) {
+            document.getElementById('connectionNode').innerText = new URL(node).hostname;
+            return await res.json();
+          }
+        } catch (e) {
+          console.warn(`Nodo fallido: ${node}`);
+        }
+      }
+      throw new Error("Sin respuesta de los nodos Hive.");
+    }
+
+    // 4. Carga y filtrado de contenido
+    async function loadHiveAudio() {
+      const feed = document.getElementById('feed');
+      feed.innerHTML = `<div class="col-span-full py-16 text-center text-slate-500 animate-pulse">Buscando audios directos en Hive...</div>`;
+
+      try {
+        const requests = SEARCH_TAGS.map(tag => hiveRpcCall({
+          jsonrpc: "2.0",
+          method: "condenser_api.get_discussions_by_created",
+          params: [{ tag, limit: 20 }],
+          id: 1
+        }));
+
+        const results = await Promise.allSettled(requests);
+        const postMap = new Map();
+
+        results.forEach(res => {
+          if (res.status === 'fulfilled' && res.value?.result) {
+            res.value.result.forEach(p => postMap.set(p.permlink, p));
+          }
+        });
+
+        playlist = Array.from(postMap.values())
+          .map(post => ({
+            author: post.author,
+            title: post.title,
+            permlink: post.permlink,
+            streamUrl: extractAudioFromPost(post)
+          }))
+          .filter(item => !!item.streamUrl);
+
+        if (playlist.length === 0) {
+          feed.innerHTML = `<div class="col-span-full py-16 text-center text-slate-500">No se encontraron archivos de sonido en vivo en este momento.</div>`;
+        } else {
+          renderPlaylist();
+        }
+      } catch (err) {
+        feed.innerHTML = `<div class="col-span-full py-16 text-center text-rose-500">Error de red. Intenta nuevamente.</div>`;
+      }
+    }
+
+    // 5. Renderizado
+    function renderPlaylist() {
+      const feed = document.getElementById('feed');
+      feed.innerHTML = playlist.map((item, idx) => `
+        <article class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col justify-between hover:border-slate-700 transition">
+          <div>
+            <span class="text-[10px] font-semibold uppercase tracking-wider text-indigo-400">@${item.author}</span>
+            <h3 class="text-sm font-medium text-slate-200 mt-1 line-clamp-2 leading-snug">${item.title}</h3>
+          </div>
+          <button onclick="playIndex(${idx})" class="mt-4 w-full py-2 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-2">
+            <i data-lucide="play" class="w-3.5 h-3.5"></i> Reproducir
+          </button>
+        </article>
+      `).join('');
+      lucide.createIcons();
+    }
+
+    // 6. Controles del Reproductor
+    function playIndex(index) {
+      if (!playlist[index]) return;
+      currentIndex = index;
+      const track = playlist[currentIndex];
+
+      audio.src = track.streamUrl;
+      trackTitle.innerText = track.title;
+      trackAuthor.innerText = `@${track.author}`;
+
+      audio.play().then(() => {
+        updatePlayState(true);
+      }).catch(e => {
+        console.warn("Autoplay prevenido por el navegador. Interacción requerida.", e);
+        updatePlayState(false);
+      });
+    }
+
+    function togglePlayPause() {
+      if (!audio.src && playlist.length > 0) {
+        playIndex(0);
+        return;
+      }
+      if (audio.paused) {
+        audio.play();
+        updatePlayState(true);
+      } else {
+        audio.pause();
+        updatePlayState(false);
+      }
+    }
+
+    function skipTrack(step) {
+      if (playlist.length === 0) return;
+      currentIndex = (currentIndex + step + playlist.length) % playlist.length;
+      playIndex(currentIndex);
+    }
+
+    function playRandomTrack() {
+      if (playlist.length === 0) return;
+      currentIndex = Math.floor(Math.random() * playlist.length);
+      playIndex(currentIndex);
+    }
+
+    function setVolume(val) {
+      audio.volume = val;
+    }
+
+    function updatePlayState(isPlaying) {
+      playBtn.innerHTML = isPlaying 
+        ? '<i data-lucide="pause" class="w-5 h-5"></i>' 
+        : '<i data-lucide="play" class="w-5 h-5"></i>';
+      lucide.createIcons();
+    }
+
+    // 7. Eventos de Recuperación de Errores
+    audio.onerror = () => {
+      console.error("Error al cargar la pista:", audio.src);
+      trackTitle.innerText = "⚠️ Pista no disponible. Saltando...";
+      setTimeout(() => skipTrack(1), 1500);
+    };
+
+    audio.onended = () => skipTrack(1);
+
+    // Inicialización
+    loadHiveAudio();
+  </script>
+</body>
+</html>
