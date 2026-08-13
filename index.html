@@ -3,10 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Nimbu Audio - 3Speak & IPFS</title>
+  <title>Nimbu Audio - 3Speak & Pinata IPFS</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
-  <!-- HLS.js para soportar el streaming nativo m3u8 de 3Speak -->
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 </head>
 <body class="bg-slate-950 text-slate-200 min-h-screen p-6 pb-28">
@@ -22,19 +21,19 @@
         <i data-lucide="play-circle" class="w-4 h-4"></i> Cargar de 3Speak
       </button>
 
-      <button onclick="importPinataFiles()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2">
+      <button onclick="importPinataFiles()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2">
         <i data-lucide="database" class="w-4 h-4"></i> Importar de Pinata
       </button>
     </div>
 
     <!-- Lista de reproducción -->
     <div id="playlist" class="space-y-2">
-      <p id="statusMsg" class="text-slate-500 text-sm">Haz clic en "Cargar de 3Speak" para traer audios recientes...</p>
+      <p id="statusMsg" class="text-slate-500 text-sm">Haz clic en "Importar de Pinata" o "Cargar de 3Speak"...</p>
     </div>
   </div>
 
   <!-- Reproductor Fijo -->
-  <footer class="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 p-4 backdrop-blur-md">
+  <footer class="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 p-4 backdrop-blur-md z-50">
     <div class="max-w-3xl mx-auto flex items-center justify-between">
       <div class="w-1/2">
         <div id="currentInfo" class="text-xs font-bold text-white truncate">Ninguna pista seleccionada</div>
@@ -56,10 +55,81 @@
     const playBtn = document.getElementById('mainPlayBtn');
     let hls = null;
 
-    // --- 1. CARGAR DESDE 3SPEAK (vía API Hive) ---
+    // --- IMPORTAR DESDE PINATA CON SOPORTE JWT Y API KEYS ---
+    async function importPinataFiles() {
+      const authType = confirm("¿Quieres usar tu JWT Token de Pinata? (Recomendado)\n\n• Haz clic en [Aceptar] para usar JWT Token.\n• Haz clic en [Cancelar] para ingresar API Key y Secret.");
+
+      let headers = {};
+
+      if (authType) {
+        const jwt = prompt("Pega tu Pinata JWT Bearer Token:");
+        if (!jwt) return;
+        headers = {
+          "Authorization": `Bearer ${jwt.replace('Bearer ', '').trim()}`
+        };
+      } else {
+        const apiKey = prompt("Ingresa tu Pinata API Key:");
+        const apiSecret = prompt("Ingresa tu Pinata API Secret:");
+        if (!apiKey || !apiSecret) return;
+        headers = {
+          "pinata_api_key": apiKey.trim(),
+          "pinata_secret_api_key": apiSecret.trim()
+        };
+      }
+
+      document.getElementById('statusMsg').innerText = "Consultando catálogo en Pinata...";
+
+      try {
+        // Intentamos listar los archivos pinedos
+        const response = await fetch("https://api.pinata.cloud/data/pinList?status=pinned&pageLimit=100", {
+          method: "GET",
+          headers: headers
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || `Error HTTP: ${response.status}`);
+        }
+
+        const data = await response.json();
+        
+        if (!data.rows || data.rows.length === 0) {
+          document.getElementById('statusMsg').innerText = "No se encontraron archivos en esta cuenta de Pinata.";
+          return;
+        }
+
+        // Filtramos y preparamos las pistas
+        const pinataTracks = data.rows.map(item => {
+          const fileName = item.metadata?.name || item.ipfs_pin_hash;
+          return {
+            title: fileName,
+            author: "Tu Pinata IPFS",
+            url: `https://gateway.pinata.cloud/ipfs/${item.ipfs_pin_hash}`,
+            source: 'Pinata',
+            hash: item.ipfs_pin_hash
+          };
+        });
+
+        // Combinamos la lista para evitar duplicados
+        pinataTracks.forEach(track => {
+          if (!playlist.some(p => p.url === track.url)) {
+            playlist.push(track);
+          }
+        });
+
+        renderList();
+        document.getElementById('statusMsg').innerText = `✓ Se importaron ${pinataTracks.length} archivos desde Pinata.`;
+
+      } catch (e) {
+        console.error("Error Pinata:", e);
+        alert(`❌ Error al conectar con Pinata: ${e.message}\n\nVerifica que tus credenciales tengan permisos de lectura (pinList).`);
+        document.getElementById('statusMsg').innerText = "Error importando de Pinata.";
+      }
+    }
+
+    // --- CARGAR DE 3SPEAK ---
     async function fetch3SpeakAudio() {
       document.getElementById('statusMsg').innerText = "Conectando con 3Speak / Hive...";
-      
       try {
         const response = await fetch('https://api.hive.blog', {
           method: 'POST',
@@ -73,23 +143,17 @@
         });
 
         const { result } = await response.json();
-        
         const imported3Speak = [];
 
         result.forEach(post => {
           try {
             const meta = JSON.parse(post.json_metadata || "{}");
-            // Verificar si el post proviene de 3Speak
             if (meta.app && meta.app.includes('3speak')) {
               let streamUrl = null;
-
-              // Opción A: Enlace HLS directo (.m3u8) proporcionado por 3Speak
               if (meta.video && meta.video.info && meta.video.info.file) {
                 const permlink = meta.video.info.file.replace('.m3u8', '');
                 streamUrl = `https://encoder.3speak.tv/play?v=${post.author}/${permlink}`;
-              } 
-              // Opción B: Hash IPFS embebido
-              else if (meta.video && meta.video.info && meta.video.info.ipfs) {
+              } else if (meta.video && meta.video.info && meta.video.info.ipfs) {
                 streamUrl = `https://ipfs.3speak.tv/ipfs/${meta.video.info.ipfs}`;
               }
 
@@ -102,55 +166,30 @@
                 });
               }
             }
-          } catch (err) {
-            // Ignorar errores de parsing individuales
-          }
+          } catch (err) {}
         });
 
         if (imported3Speak.length > 0) {
-          playlist = [...playlist, ...imported3Speak];
+          imported3Speak.forEach(t => {
+            if (!playlist.some(p => p.url === t.url)) playlist.push(t);
+          });
           renderList();
         } else {
-          document.getElementById('statusMsg').innerText = "No se encontraron streams válidos en los posts recientes de 3Speak.";
+          document.getElementById('statusMsg').innerText = "No se encontraron audios en 3Speak.";
         }
-
       } catch (e) {
-        document.getElementById('statusMsg').innerText = "Error consultando los servidores de Hive/3Speak.";
+        document.getElementById('statusMsg').innerText = "Error consultando los servidores de Hive.";
       }
     }
 
-    // --- 2. IMPORTAR DESDE PINATA ---
-    async function importPinataFiles() {
-      const apiKey = prompt("Ingresa tu Pinata API Key:");
-      const apiSecret = prompt("Ingresa tu Pinata API Secret:");
-      if (!apiKey || !apiSecret) return;
-
-      document.getElementById('statusMsg').innerText = "Cargando archivos de Pinata...";
-
-      try {
-        const response = await fetch("https://api.pinata.cloud/data/pinList?status=pinned", {
-          method: "GET",
-          headers: { "pinata_api_key": apiKey, "pinata_secret_api_key": apiSecret }
-        });
-        
-        const data = await response.json();
-        const pinataTracks = data.rows.map(item => ({
-          title: item.metadata?.name || "Audio IPFS",
-          author: "Pinata User",
-          url: `https://gateway.pinata.cloud/ipfs/${item.ipfs_pin_hash}`,
-          source: 'Pinata'
-        }));
-
-        playlist = [...playlist, ...pinataTracks];
-        renderList();
-      } catch (e) {
-        alert("Error al conectar con Pinata");
-      }
-    }
-
-    // --- 3. RENDERIZADO DE LISTA ---
+    // --- RENDERIZADO ---
     function renderList() {
       const container = document.getElementById('playlist');
+      if (playlist.length === 0) {
+        container.innerHTML = `<p class="text-slate-500 text-sm">Lista vacía.</p>`;
+        return;
+      }
+
       container.innerHTML = playlist.map((t, i) => `
         <div class="p-3 bg-slate-900 rounded-lg flex justify-between items-center border border-slate-800 hover:border-slate-700 transition">
           <div class="truncate mr-4">
@@ -162,26 +201,22 @@
           </button>
         </div>
       `).join('');
-      document.getElementById('statusMsg').innerText = "";
     }
 
-    // --- 4. MOTOR DE REPRODUCCIÓN (Compatibilidad HLS/IPFS) ---
+    // --- REPRODUCCIÓN ---
     async function playTrack(i) {
       curIdx = i;
       const track = playlist[i];
       document.getElementById('currentInfo').innerText = track.title;
       document.getElementById('currentAuthor').innerText = `${track.source} • ${track.author}`;
 
-      // Si el stream es un manifiesto HLS (.m3u8 de 3Speak)
       if (Hls.isSupported() && track.url.includes('.m3u8')) {
         if (hls) hls.destroy();
         hls = new Hls();
         hls.loadSource(track.url);
         hls.attachMedia(audio);
         hls.on(Hls.Events.MANIFEST_PARSED, () => audio.play());
-      } 
-      // Si es un audio directo MP3/IPFS
-      else {
+      } else {
         if (hls) hls.destroy();
         audio.src = track.url;
         await audio.play();
