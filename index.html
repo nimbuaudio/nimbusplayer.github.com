@@ -18,13 +18,13 @@
       <button onclick="fetchHiveMusic()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition">
         Cargar Tendencia #music de Hive
       </button>
-      <button onclick="importPinataFiles()" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition">
-        Importar de Pinata
+      <button onclick="importPinataFiles()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-semibold transition">
+        <i data-lucide="database" class="w-4 h-4 inline mr-1"></i> Importar de Pinata
       </button>
     </div>
 
     <div id="playlist" class="space-y-2">
-      <p id="statusMsg" class="text-slate-500 text-sm">Presiona "Cargar" para buscar música...</p>
+      <p id="statusMsg" class="text-slate-500 text-sm">Presiona "Cargar" o "Importar" para empezar...</p>
     </div>
   </div>
 
@@ -62,35 +62,75 @@
         });
         const { result } = await response.json();
         
-        playlist = result.map(post => {
-          // Extraer links de audio de los metadatos o cuerpo
+        const hiveTracks = result.map(post => {
           const meta = JSON.parse(post.json_metadata || "{}");
           const url = (meta.audio_url || meta.ipfs || "") || (post.body.match(/https?:\/\/[^\s]+\.(mp3|wav|ogg)/) || [])[0];
-          return { title: post.title, author: post.author, url: url };
+          return { title: post.title, author: "@" + post.author, url: url, source: 'Hive' };
         }).filter(item => item.url);
 
+        // Combinar con los que ya teníamos (si hubo)
+        playlist = [...playlist, ...hiveTracks];
         renderList();
       } catch (e) {
         document.getElementById('statusMsg').innerText = "Error conectando a Hive.";
       }
     }
 
-    // 2. Renderizar y manejar errores de carga
+    // 2. Importar archivos de Pinata
+    async function importPinataFiles() {
+      const apiKey = prompt("Ingresa tu Pinata API Key:");
+      const apiSecret = prompt("Ingresa tu Pinata API Secret:");
+      
+      if (!apiKey || !apiSecret) return alert("Credenciales necesarias");
+
+      document.getElementById('statusMsg').innerText = "Conectando a Pinata...";
+
+      try {
+        const response = await fetch("https://api.pinata.cloud/data/pinList?status=pinned", {
+          method: "GET",
+          headers: { "pinata_api_key": apiKey, "pinata_secret_api_key": apiSecret }
+        });
+        
+        const data = await response.json();
+        
+        const pinataTracks = data.rows
+          .filter(item => item.mime_type && item.mime_type.includes('audio'))
+          .map(item => ({
+            title: item.metadata?.name || "Archivo IPFS",
+            author: "Tu cuenta Pinata",
+            url: `https://gateway.pinata.cloud/ipfs/${item.ipfs_pin_hash}`,
+            source: 'Pinata'
+          }));
+
+        playlist = [...playlist, ...pinataTracks];
+        renderList();
+        alert(`Importados ${pinataTracks.length} archivos de audio.`);
+      } catch (e) {
+        document.getElementById('statusMsg').innerText = "Error importando de Pinata.";
+      }
+    }
+
+    // 3. Renderizar Lista
     function renderList() {
       const container = document.getElementById('playlist');
+      if (playlist.length === 0) {
+        container.innerHTML = `<p class="text-slate-500 text-sm">No se encontraron audios.</p>`;
+        return;
+      }
+
       container.innerHTML = playlist.map((t, i) => `
         <div class="p-3 bg-slate-900 rounded-lg flex justify-between items-center border border-slate-800">
           <div>
-            <h3 class="text-sm font-bold truncate w-64">${t.title}</h3>
-            <p class="text-xs text-indigo-400">@${t.author}</p>
+            <h3 class="text-sm font-bold truncate w-48">${t.title}</h3>
+            <p class="text-[10px] text-indigo-400 font-mono">${t.source} • ${t.author}</p>
           </div>
-          <button onclick="playTrack(${i})" class="text-xs bg-slate-800 px-3 py-1 rounded">Play</button>
+          <button onclick="playTrack(${i})" class="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1 rounded">Play</button>
         </div>
       `).join('');
-      document.getElementById('statusMsg').innerText = playlist.length > 0 ? "" : "No se encontraron audios.";
+      document.getElementById('statusMsg').innerText = "";
     }
 
-    // 3. Reproducción inteligente
+    // 4. Reproducción
     async function playTrack(i) {
       curIdx = i;
       const track = playlist[i];
@@ -106,7 +146,7 @@
         await audio.play();
         playBtn.innerHTML = '<i data-lucide="pause"></i>';
       } catch (e) {
-        alert("El navegador bloqueó la reproducción automática.");
+        console.error("Error reproducción:", e);
       }
     }
 
@@ -116,11 +156,11 @@
     }
 
     function skip(s) { 
+      if(playlist.length === 0) return;
       let next = (curIdx + s + playlist.length) % playlist.length;
       playTrack(next);
     }
 
-    // Inicializar iconos
     lucide.createIcons();
   </script>
 </body>
