@@ -61,18 +61,23 @@
       <div id="uploadStatus" class="hidden p-4 bg-slate-950 border border-slate-800 rounded-xl text-xs space-y-3 font-mono"></div>
     </section>
 
-    <!-- Reproductor de Posts de Hive -->
+    <!-- Reproductor de Posts de Hive y Pistas Guardadas -->
     <section>
       <div class="flex justify-between items-center mb-6">
-        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Pistas encontradas en Hive</h2>
-        <button onclick="loadHiveAudio()" class="flex items-center gap-2 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg border border-slate-700 transition">
-          <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Recargar Hive
-        </button>
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Pistas disponibles</h2>
+        <div class="flex gap-2">
+          <button onclick="clearLocalStorageAudios()" class="flex items-center gap-1.5 text-xs bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 px-3 py-1.5 rounded-lg border border-rose-800/40 transition" title="Limpiar pistas subidas guardadas en este navegador">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Limpiar Guardados
+          </button>
+          <button onclick="loadHiveAudio()" class="flex items-center gap-2 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg border border-slate-700 transition">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Recargar Hive
+          </button>
+        </div>
       </div>
 
       <div id="feed" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <div id="loader" class="col-span-full py-16 text-center text-slate-500 animate-pulse">
-          Buscando audios directos en la blockchain...
+          Cargando biblioteca y consultando la red Hive...
         </div>
       </div>
     </section>
@@ -147,7 +152,49 @@
 
     lucide.createIcons();
 
-    // --- MÓDULO 1: SUBIDA A IPFS (API KEY + SECRET) ---
+    // --- MÓDULO LOCAL STORAGE (PERSISTENCIA AL REFRESCAR) ---
+    const STORAGE_KEY = 'nimbu_uploaded_tracks_v1';
+
+    function getSavedLocalTracks() {
+      try {
+        const data = localStorage.getItem(STORAGE_KEY);
+        return data ? JSON.parse(data) : [];
+      } catch (e) {
+        console.error("Error al leer de localStorage", e);
+        return [];
+      }
+    }
+
+    function saveTrackLocally(track) {
+      try {
+        const currentTracks = getSavedLocalTracks();
+        // Evitar duplicados por ipfsHash
+        const exists = currentTracks.some(t => t.ipfsHash === track.ipfsHash);
+        if (!exists) {
+          // Guardar solo los metadatos necesarios (no guardar blobs binarios pesados)
+          const trackToSave = {
+            author: track.author,
+            title: track.title,
+            streamUrl: track.streamUrl,
+            ipfsHash: track.ipfsHash,
+            isUserUploaded: true
+          };
+          currentTracks.unshift(trackToSave);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(currentTracks));
+        }
+      } catch (e) {
+        console.error("Error al guardar pista en localStorage", e);
+      }
+    }
+
+    function clearLocalStorageAudios() {
+      if (confirm("¿Deseas quitar los audios subidos que están guardados en este navegador?")) {
+        localStorage.removeItem(STORAGE_KEY);
+        loadHiveAudio();
+      }
+    }
+
+    // --- MÓDULO 1: SUBIDA A IPFS ---
     async function uploadAudioToIPFS(file, apiKey, apiSecret) {
       const formData = new FormData();
       formData.append("file", file);
@@ -213,8 +260,6 @@
       if (!title || !artist || !fileInput.files[0]) return alert("Completa el título, autor y archivo.");
 
       const selectedFile = fileInput.files[0];
-
-      // Creamos una URL de Blob local del archivo subido para reproducción instantánea
       const localAudioBlobUrl = URL.createObjectURL(selectedFile);
 
       statusBox.classList.remove('hidden');
@@ -232,14 +277,20 @@
         
         statusBox.innerHTML += `<p class="text-emerald-400">✓ JSON listo: <a href="${metadataUrl}" target="_blank" class="underline font-bold">${metadataUrl}</a></p>`;
         
-        // Agregar a la lista para reproducción
-        playlist.unshift({
+        const newTrack = {
           author: artist,
           title: title,
           streamUrl: audioUrl,
           ipfsHash: ipfsHash,
-          localBlobUrl: localAudioBlobUrl
-        });
+          localBlobUrl: localAudioBlobUrl,
+          isUserUploaded: true
+        };
+
+        // Guardar en la memoria persistente
+        saveTrackLocally(newTrack);
+
+        // Agregar a la lista actual de reproducción
+        playlist.unshift(newTrack);
         renderPlaylist();
 
         statusBox.innerHTML += `
@@ -261,7 +312,7 @@
       }
     }
 
-    // --- MÓDULO 2: LECTURA DE HIVE ---
+    // --- MÓDULO 2: LECTURA DE HIVE Y LISTA MANTENIDA ---
     function isDirectAudioUrl(url) {
       if (!url || typeof url !== 'string') return false;
       if (/youtube\.com|youtu\.be|3speak\.tv\/watch|soundcloud\.com/i.test(url)) return false;
@@ -307,6 +358,9 @@
       const feed = document.getElementById('feed');
       feed.innerHTML = `<div class="col-span-full py-16 text-center text-slate-500 animate-pulse">Sintonizando la red Hive...</div>`;
 
+      // 1. Obtener canciones guardadas localmente
+      const savedTracks = getSavedLocalTracks();
+
       try {
         const requests = SEARCH_TAGS.map(tag => hiveRpcCall({
           jsonrpc: "2.0",
@@ -332,10 +386,23 @@
           }))
           .filter(item => !!item.streamUrl);
 
-        playlist = [...playlist, ...remoteList];
+        // 2. Unir audios locales + los de Hive eliminando duplicados
+        const combined = [...savedTracks];
+        remoteList.forEach(rt => {
+          const exists = combined.some(st => st.streamUrl === rt.streamUrl);
+          if (!exists) combined.push(rt);
+        });
+
+        playlist = combined;
         renderPlaylist();
       } catch (err) {
-        feed.innerHTML = `<div class="col-span-full py-16 text-center text-rose-500">Error al consultar los nodos de Hive.</div>`;
+        // En caso de falla de red, mostrar al menos las subidas locales
+        if (savedTracks.length > 0) {
+          playlist = savedTracks;
+          renderPlaylist();
+        } else {
+          feed.innerHTML = `<div class="col-span-full py-16 text-center text-rose-500">Error al consultar los nodos de Hive.</div>`;
+        }
       }
     }
 
@@ -347,7 +414,8 @@
       }
 
       feed.innerHTML = playlist.map((item, idx) => `
-        <article class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col justify-between hover:border-slate-700 transition">
+        <article class="bg-slate-900 border ${item.isUserUploaded ? 'border-indigo-500/40' : 'border-slate-800'} rounded-xl p-4 flex flex-col justify-between hover:border-slate-700 transition relative">
+          ${item.isUserUploaded ? '<span class="absolute top-3 right-3 text-[9px] bg-indigo-500/20 text-indigo-300 font-mono px-2 py-0.5 rounded border border-indigo-500/30">Guardado</span>' : ''}
           <div>
             <span class="text-[10px] font-semibold uppercase tracking-wider text-indigo-400">@${item.author}</span>
             <h3 class="text-sm font-medium text-slate-200 mt-1 line-clamp-2 leading-snug">${item.title}</h3>
@@ -369,7 +437,7 @@
       playerTrackTitle.innerText = `⏳ Cargando: ${track.title}...`;
       playerTrackAuthor.innerText = `@${track.author}`;
 
-      // 1. Si es recién subido desde esta sesión, usar Blob local (Audio 100% Instantáneo y Completo)
+      // 1. Si es recién subido desde esta sesión, usar Blob local directo
       if (track.localBlobUrl) {
         audio.src = track.localBlobUrl;
         audio.load();
@@ -385,7 +453,7 @@
 
       // 2. Extraer Hash IPFS
       let hashMatch = track.streamUrl.match(/\/ipfs\/([a-zA-Z0-9]+)/);
-      let ipfsHash = hashMatch ? hashMatch[1] : null;
+      let ipfsHash = track.ipfsHash || (hashMatch ? hashMatch[1] : null);
 
       let playedSuccessfully = false;
 
@@ -463,7 +531,7 @@
 
     audio.onended = () => skipTrack(1);
 
-    // Inicializar
+    // Inicializar al cargar la página
     loadHiveAudio();
   </script>
 </body>
