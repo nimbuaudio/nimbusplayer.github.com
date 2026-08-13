@@ -138,7 +138,7 @@
       'https://cloudflare-ipfs.com/ipfs/'
     ];
 
-    const SEARCH_TAGS = ["music", "audio", "podcast", "sound"];
+    const SEARCH_TAGS = ["music", "audio", "podping", "sound", "hivemusic"];
     const AUDIO_EXTENSIONS = "mp3|wav|ogg|m4a|aac|flac|webm|opus|oga|weba|wma|m4b";
 
     let playlist = [];
@@ -153,7 +153,7 @@
     lucide.createIcons();
 
     // --- MÓDULO PERSISTENCIA (LOCAL STORAGE) ---
-    const STORAGE_KEY = 'nimbu_uploaded_tracks_v2';
+    const STORAGE_KEY = 'nimbu_uploaded_tracks_v3';
 
     function getSavedLocalTracks() {
       try {
@@ -167,7 +167,7 @@
     function saveTrackLocally(track) {
       try {
         const currentTracks = getSavedLocalTracks();
-        const exists = currentTracks.some(t => t.ipfsHash === track.ipfsHash || t.streamUrl === track.streamUrl);
+        const exists = currentTracks.some(t => (t.ipfsHash && t.ipfsHash === track.ipfsHash) || t.streamUrl === track.streamUrl);
         if (!exists) {
           const trackToSave = {
             author: track.author,
@@ -185,7 +185,7 @@
     }
 
     function clearLocalStorageAudios() {
-      if (confirm("¿Limpiar los audios subidos que están guardados localmente?")) {
+      if (confirm("¿Limpiar los audios subidos que están guardados localmente en este navegador?")) {
         localStorage.removeItem(STORAGE_KEY);
         rebuildPlaylist();
       }
@@ -194,7 +194,6 @@
     function rebuildPlaylist() {
       const local = getSavedLocalTracks();
       
-      // Combinar audios guardados + audios de Hive evitando duplicados
       const combined = [...local];
       hiveTracks.forEach(ht => {
         const exists = combined.some(st => st.streamUrl === ht.streamUrl);
@@ -297,10 +296,7 @@
           isUserUploaded: true
         };
 
-        // Guardar permanentemente en LocalStorage
         saveTrackLocally(newTrack);
-
-        // Reconstruir lista manteniendo todo sincronizado
         rebuildPlaylist();
 
         statusBox.innerHTML += `
@@ -322,28 +318,40 @@
       }
     }
 
-    // --- MÓDULO 2: LECTURA DE HIVE ---
+    // --- MÓDULO 2: EXTRACTOR MEJORADO DE HIVE ---
     function isDirectAudioUrl(url) {
       if (!url || typeof url !== 'string') return false;
-      if (/youtube\.com|youtu\.be|3speak\.tv\/watch|soundcloud\.com/i.test(url)) return false;
+      if (/youtube\.com|youtu\.be|3speak\.tv|soundcloud\.com|spotify\.com/i.test(url)) return false;
       const regexCheck = new RegExp(`\\.(${AUDIO_EXTENSIONS})(\\?.*)?$`, 'i');
       return regexCheck.test(url) || url.includes('/ipfs/');
     }
 
     function extractAudioFromPost(post) {
-      const regex = new RegExp(`(https?:\\/\\/[^\\s"']+\\.(${AUDIO_EXTENSIONS})(\\?[^\\s"']*)?)|(https?:\\/\\/[^\\s"']+\\/ipfs\\/[a-zA-Z0-9]+)`, 'gi');
-      const bodyMatches = post.body ? post.body.match(regex) : null;
-      if (bodyMatches) {
-        const direct = bodyMatches.find(l => isDirectAudioUrl(l));
-        if (direct) return direct;
-      }
-
+      // 1. Revisar metadatos JSON explícitos
       let meta = {};
-      try { meta = typeof post.json_metadata === 'string' ? JSON.parse(post.json_metadata || '{}') : post.json_metadata; } catch(e) {}
+      try { 
+        meta = typeof post.json_metadata === 'string' ? JSON.parse(post.json_metadata || '{}') : post.json_metadata; 
+      } catch(e) {}
       
       if (isDirectAudioUrl(meta?.audio)) return meta.audio;
       if (isDirectAudioUrl(meta?.audio_url)) return meta.audio_url;
       if (isDirectAudioUrl(meta?.music)) return meta.music;
+      if (meta?.podcast?.url && isDirectAudioUrl(meta.podcast.url)) return meta.podcast.url;
+
+      // 2. Extraer mediante expresiones regulares en el cuerpo del Post
+      if (post.body) {
+        const audioRegex = new RegExp(`(https?:\\/\\/[^\\s"']+\\.(${AUDIO_EXTENSIONS})(\\?[^\\s"']*)?)`, 'gi');
+        const matches = post.body.match(audioRegex);
+        if (matches && matches.length > 0) return matches[0];
+
+        const ipfsRegex = /(https?:\/\/[^\s"']+\/ipfs\/[a-zA-Z0-9]+)/gi;
+        const ipfsMatches = post.body.match(ipfsRegex);
+        if (ipfsMatches && ipfsMatches.length > 0) {
+          const directIpfs = ipfsMatches.find(l => isDirectAudioUrl(l));
+          if (directIpfs) return directIpfs;
+        }
+      }
+
       return null;
     }
 
@@ -365,14 +373,13 @@
     }
 
     async function loadHiveAudio() {
-      // Mostrar primero las pistas locales mientras carga Hive
       rebuildPlaylist();
 
       try {
         const requests = SEARCH_TAGS.map(tag => hiveRpcCall({
           jsonrpc: "2.0",
           method: "condenser_api.get_discussions_by_created",
-          params: [{ tag, limit: 15 }],
+          params: [{ tag, limit: 35 }],
           id: 1
         }));
 
@@ -393,17 +400,16 @@
           }))
           .filter(item => !!item.streamUrl);
 
-        // Volver a combinar y renderizar
         rebuildPlaylist();
       } catch (err) {
-        console.warn("Fallo al descargar pistas remotas de Hive:", err);
+        console.warn("Error consultando la API de Hive:", err);
       }
     }
 
     function renderPlaylist() {
       const feed = document.getElementById('feed');
       if (playlist.length === 0) {
-        feed.innerHTML = `<div class="col-span-full py-16 text-center text-slate-500">No hay audios disponibles actualmente.</div>`;
+        feed.innerHTML = `<div class="col-span-full py-16 text-center text-slate-500">No se encontraron audios directos en Hive en este momento.<br><span class="text-xs text-slate-600">Prueba subiendo tus propios audios arriba.</span></div>`;
         return;
       }
 
@@ -422,7 +428,7 @@
       lucide.createIcons();
     }
 
-    // --- MÓDULO 3: REPRODUCCIÓN ---
+    // --- MÓDULO 3: REPRODUCCIÓN (PRE-FETCH BLOB) ---
     async function playIndex(index) {
       if (!playlist[index]) return;
       currentIndex = index;
@@ -431,7 +437,6 @@
       playerTrackTitle.innerText = `⏳ Cargando: ${track.title}...`;
       playerTrackAuthor.innerText = `@${track.author}`;
 
-      // 1. Si se acaba de subir en esta misma pestaña, usar Blob inmediato
       if (track.localBlobUrl) {
         audio.src = track.localBlobUrl;
         audio.load();
@@ -445,7 +450,6 @@
         }
       }
 
-      // 2. Si no, descargar el archivo completo mediante Fetch Blob desde IPFS Gateways
       let hashMatch = track.streamUrl.match(/\/ipfs\/([a-zA-Z0-9]+)/);
       let ipfsHash = track.ipfsHash || (hashMatch ? hashMatch[1] : null);
 
@@ -475,7 +479,6 @@
         }
       }
 
-      // 3. Método directo de respaldo
       if (!playedSuccessfully) {
         try {
           audio.src = track.streamUrl;
@@ -490,7 +493,7 @@
       }
 
       if (!playedSuccessfully) {
-        playerTrackTitle.innerText = "⚠️ Error al cargar el audio de IPFS";
+        playerTrackTitle.innerText = "⚠️ Error al cargar el audio";
         updatePlayState(false);
       }
     }
@@ -522,7 +525,7 @@
 
     audio.onended = () => skipTrack(1);
 
-    // Inicialización
+    // Inicialización al cargar la página
     loadHiveAudio();
   </script>
 </body>
