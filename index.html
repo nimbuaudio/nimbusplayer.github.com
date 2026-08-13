@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Hive Sound Player</title>
+  <title>Hive Sound Player - All Formats</title>
   <!-- Tailwind CSS & Lucide Icons -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
@@ -25,7 +25,7 @@
         <div class="p-2 bg-indigo-600/20 text-indigo-400 rounded-lg">
           <i data-lucide="radio" class="w-5 h-5"></i>
         </div>
-        <h1 class="font-extrabold text-lg tracking-wide text-white">Hive Audio Engine</h1>
+        <h1 class="font-extrabold text-lg tracking-wide text-white">Hive Audio Engine (Omni-Format)</h1>
       </div>
       <div id="connectionNode" class="text-xs text-slate-500 font-mono">Conectando...</div>
     </div>
@@ -34,7 +34,7 @@
   <!-- Panel Principal -->
   <main class="max-w-5xl mx-auto w-full px-6 py-8 flex-1">
     <div class="flex justify-between items-center mb-6">
-      <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Pistas Encontradas</h2>
+      <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Pistas Encontradas (Todos los formatos)</h2>
       <button onclick="loadHiveAudio()" class="flex items-center gap-2 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg border border-slate-700 transition">
         <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Actualizar
       </button>
@@ -99,6 +99,9 @@
     ];
     const SEARCH_TAGS = ["music", "audio", "podcast", "sound"];
 
+    // Lista ampliada con todos los formatos de audio conocidos compatibles con navegadores modernos
+    const AUDIO_EXTENSIONS = "mp3|wav|ogg|m4a|aac|flac|webm|opus|oga|weba|wma|m4b";
+
     let playlist = [];
     let currentIndex = 0;
     
@@ -109,17 +112,19 @@
 
     lucide.createIcons();
 
-    // 1. Validador estricto de URLs directas de audio
+    // 1. Validador estricto con todos los formatos de audio conocidos
     function isDirectAudioUrl(url) {
       if (!url || typeof url !== 'string') return false;
       if (/youtube\.com|youtu\.be|3speak\.tv\/watch|soundcloud\.com/i.test(url)) return false;
-      return /\.(mp3|wav|ogg|m4a|aac)(\?.*)?$/i.test(url);
+      
+      const regexCheck = new RegExp(`\\.(${AUDIO_EXTENSIONS})(\\?.*)?$`, 'i');
+      return regexCheck.test(url);
     }
 
-    // 2. Extractor multifase de audio en un post
+    // 2. Extractor multifase adaptable a cualquier formato de audio
     function extractAudioFromPost(post) {
-      // Fase A: Regex en el cuerpo
-      const regex = /(https?:\/\/[^\s"']+\.(mp3|wav|ogg|m4a|aac)(\?[^\s"']*)?)/gi;
+      // Fase A: Regex dinámico basado en todos los formatos conocidos
+      const regex = new RegExp(`(https?:\\/\\/[^\\s"']+\\.(${AUDIO_EXTENSIONS})(\\?[^\\s"']*)?)`, 'gi');
       const bodyMatches = post.body ? post.body.match(regex) : null;
       if (bodyMatches) {
         const direct = bodyMatches.find(l => isDirectAudioUrl(l));
@@ -163,13 +168,13 @@
     // 4. Carga y filtrado de contenido
     async function loadHiveAudio() {
       const feed = document.getElementById('feed');
-      feed.innerHTML = `<div class="col-span-full py-16 text-center text-slate-500 animate-pulse">Buscando audios directos en Hive...</div>`;
+      feed.innerHTML = `<div class="col-span-full py-16 text-center text-slate-500 animate-pulse">Buscando audios (mp3, wav, flac, ogg, etc.) en Hive...</div>`;
 
       try {
         const requests = SEARCH_TAGS.map(tag => hiveRpcCall({
           jsonrpc: "2.0",
           method: "condenser_api.get_discussions_by_created",
-          params: [{ tag, limit: 20 }],
+          params: [{ tag, limit: 25 }],
           id: 1
         }));
 
@@ -192,7 +197,7 @@
           .filter(item => !!item.streamUrl);
 
         if (playlist.length === 0) {
-          feed.innerHTML = `<div class="col-span-full py-16 text-center text-slate-500">No se encontraron archivos de sonido en vivo en este momento.</div>`;
+          feed.innerHTML = `<div class="col-span-full py-16 text-center text-slate-500">No se encontraron archivos de sonido compatibles con los formatos ampliados.</div>`;
         } else {
           renderPlaylist();
         }
@@ -276,7 +281,7 @@
     // 7. Eventos de Recuperación de Errores
     audio.onerror = () => {
       console.error("Error al cargar la pista:", audio.src);
-      trackTitle.innerText = "⚠️ Pista no disponible. Saltando...";
+      trackTitle.innerText = "⚠️ Formato no soportado o enlace caído. Saltando...";
       setTimeout(() => skipTrack(1), 1500);
     };
 
