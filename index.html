@@ -2,55 +2,206 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Nimbu Player Directo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nimbu - Local Audio Engine</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  
+  <style>
+    body { font-family: 'Inter', sans-serif; background-color: #0b0f19; color: #e2e8f0; }
+    input[type=range] { accent-color: #6366f1; }
+  </style>
 </head>
-<body class="bg-slate-950 text-slate-200 p-6">
-  <div class="max-w-md mx-auto space-y-4">
-    <h1 class="text-xl font-bold">Nimbu Direct Audio Player</h1>
+<body class="min-h-screen flex flex-col pb-32">
+
+  <!-- Encabezado -->
+  <header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md sticky top-0 z-30 px-6 py-4">
+    <div class="max-w-5xl mx-auto flex justify-between items-center">
+      <div class="flex items-center gap-3">
+        <div class="p-2 bg-indigo-600/20 text-indigo-400 rounded-lg">
+          <i data-lucide="upload-cloud" class="w-5 h-5"></i>
+        </div>
+        <h1 class="font-extrabold text-lg tracking-wide text-white">Nimbu Studio Uploader</h1>
+      </div>
+      <div class="text-xs text-indigo-400 font-mono">Modo Local Activo</div>
+    </div>
+  </header>
+
+  <!-- Panel Principal -->
+  <main class="max-w-5xl mx-auto w-full px-6 py-8 flex-1">
     
-    <div class="space-y-2">
-      <input id="titleInput" type="text" placeholder="Título de la canción" class="w-full p-2 bg-slate-900 border border-slate-800 rounded">
-      <input id="urlInput" type="text" placeholder="URL o CID de IPFS (ej: https://...mp3)" class="w-full p-2 bg-slate-900 border border-slate-800 rounded">
-      <button onclick="addTrack()" class="w-full bg-indigo-600 p-2 rounded font-bold">Añadir a la lista</button>
+    <!-- Zona de Subida de Archivos -->
+    <div class="bg-slate-900 border-2 border-dashed border-slate-700 hover:border-indigo-500 transition rounded-2xl p-8 text-center mb-8 relative">
+      <input type="file" id="audioFileInput" multiple accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac,.webm,.opus,.oga,.weba,.wma" 
+             class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="handleFiles(this.files)">
+      <div class="flex flex-col items-center pointer-events-none">
+        <div class="p-4 bg-indigo-600/10 text-indigo-400 rounded-full mb-3">
+          <i data-lucide="folder-plus" class="w-8 h-8"></i>
+        </div>
+        <h3 class="text-sm font-bold text-white mb-1">Arrastra tus audios aquí o haz clic para explorar</h3>
+        <p class="text-xs text-slate-400">Soporta MP3, WAV, FLAC, OGG, M4A, AAC, WEBM y más</p>
+      </div>
     </div>
 
-    <div id="playlist" class="space-y-2 mt-4"></div>
-    <audio id="audio" controls class="w-full mt-4"></audio>
-  </div>
+    <div class="flex justify-between items-center mb-6">
+      <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Tu Playlist Local</h2>
+      <span id="trackCount" class="text-xs bg-slate-800 text-slate-300 px-2.5 py-1 rounded-full">0 pistas</span>
+    </div>
+
+    <!-- Feed / Lista de Reproducción -->
+    <div id="feed" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div id="loader" class="col-span-full py-16 text-center text-slate-500">
+        Aún no hay archivos cargados. Sube algunos audios arriba para comenzar.
+      </div>
+    </div>
+  </main>
+
+  <!-- Reproductor Flotante Inferior -->
+  <footer class="fixed bottom-0 left-0 right-0 bg-slate-900/95 border-t border-slate-800 p-4 backdrop-blur-md z-40">
+    <div class="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+      
+      <!-- Detalle de la pista -->
+      <div class="flex items-center gap-3 w-full sm:w-1/3 truncate">
+        <div class="p-2.5 bg-indigo-950 text-indigo-400 border border-indigo-800/40 rounded-xl shrink-0">
+          <i data-lucide="music" class="w-5 h-5"></i>
+        </div>
+        <div class="truncate">
+          <h4 id="trackTitle" class="text-xs font-bold text-white truncate">Selecciona una pista</h4>
+          <p id="trackAuthor" class="text-[10px] text-slate-400 truncate">Carga local</p>
+        </div>
+      </div>
+
+      <!-- Controles de Audio -->
+      <div class="flex items-center gap-4">
+        <button onclick="playRandomTrack()" class="text-slate-400 hover:text-white transition" title="Aleatorio">
+          <i data-lucide="shuffle" class="w-4 h-4"></i>
+        </button>
+        <button onclick="skipTrack(-1)" class="text-slate-300 hover:text-white transition">
+          <i data-lucide="skip-back" class="w-5 h-5"></i>
+        </button>
+        <button id="playBtn" onclick="togglePlayPause()" class="p-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full transition shadow-lg shadow-indigo-600/30">
+          <i data-lucide="play" class="w-5 h-5"></i>
+        </button>
+        <button onclick="skipTrack(1)" class="text-slate-300 hover:text-white transition">
+          <i data-lucide="skip-forward" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Control de Volumen -->
+      <div class="hidden sm:flex items-center gap-2 w-1/4 justify-end">
+        <i data-lucide="volume-2" class="w-4 h-4 text-slate-400"></i>
+        <input type="range" min="0" max="1" step="0.05" value="1" oninput="setVolume(this.value)" class="w-20">
+      </div>
+
+    </div>
+    <audio id="audioEngine"></audio>
+  </footer>
 
   <script>
-    let playlist = [];
+    let localPlaylist = [];
+    let currentIndex = 0;
+    
+    const audio = document.getElementById('audioEngine');
+    const playBtn = document.getElementById('playBtn');
+    const trackTitle = document.getElementById('trackTitle');
+    const trackAuthor = document.getElementById('trackAuthor');
 
-    function addTrack() {
-      const title = document.getElementById('titleInput').value || 'Sin título';
-      let url = document.getElementById('urlInput').value.trim();
+    lucide.createIcons();
 
-      // Si ingresan solo el Hash CID de IPFS
-      if (url.startsWith('Qm') || url.startsWith('bafy')) {
-        url = `https://ipfs.io/ipfs/${url}`;
+    function handleFiles(files) {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        // Crear una URL local segura (Blob URL) para reproducir el archivo de tu equipo
+        const blobUrl = URL.createObjectURL(file);
+        
+        localPlaylist.push({
+          title: file.name.replace(/\.[^/.]+$/, ""), // Nombre sin extensión
+          size: (file.size / (1024*1024)).toFixed(2) + " MB",
+          streamUrl: blobUrl
+        });
       }
 
-      if (!url) return alert('Ingresa una URL o CID válido');
-
-      playlist.push({ title, url });
-      render();
+      document.getElementById('trackCount').innerText = `${localPlaylist.length} pistas`;
+      renderPlaylist();
+      
+      // Si no hay nada reproduciéndose, arrancar con el primero subido
+      if (localPlaylist.length > 0 && audio.paused && !audio.src) {
+        playIndex(localPlaylist.length - files.length);
+      }
     }
 
-    function render() {
-      document.getElementById('playlist').innerHTML = playlist.map((t, i) => `
-        <div class="p-2 bg-slate-900 border border-slate-800 rounded flex justify-between items-center">
-          <span class="text-sm truncate w-2/3">${t.title}</span>
-          <button onclick="play(${i})" class="text-xs bg-indigo-600 px-3 py-1 rounded">Play</button>
-        </div>
+    function renderPlaylist() {
+      const feed = document.getElementById('feed');
+      feed.innerHTML = localPlaylist.map((item, idx) => `
+        <article class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col justify-between hover:border-slate-700 transition">
+          <div>
+            <span class="text-[10px] font-semibold uppercase tracking-wider text-indigo-400">Archivo Local (${item.size})</span>
+            <h3 class="text-sm font-medium text-slate-200 mt-1 line-clamp-2 leading-snug">${item.title}</h3>
+          </div>
+          <button onclick="playIndex(${idx})" class="mt-4 w-full py-2 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-2">
+            <i data-lucide="play" class="w-3.5 h-3.5"></i> Reproducir
+          </button>
+        </article>
       `).join('');
+      lucide.createIcons();
     }
 
-    function play(i) {
-      const player = document.getElementById('audio');
-      player.src = playlist[i].url;
-      player.play();
+    function playIndex(index) {
+      if (!localPlaylist[index]) return;
+      currentIndex = index;
+      const track = localPlaylist[currentIndex];
+
+      audio.src = track.streamUrl;
+      trackTitle.innerText = track.title;
+      trackAuthor.innerText = "Local Upload";
+
+      audio.play().then(() => {
+        updatePlayState(true);
+      }).catch(e => {
+        console.warn("Interacción requerida para reproducir:", e);
+        updatePlayState(false);
+      });
     }
+
+    function togglePlayPause() {
+      if (!audio.src && localPlaylist.length > 0) {
+        playIndex(0);
+        return;
+      }
+      if (audio.paused) {
+        audio.play();
+        updatePlayState(true);
+      } else {
+        audio.pause();
+        updatePlayState(false);
+      }
+    }
+
+    function skipTrack(step) {
+      if (localPlaylist.length === 0) return;
+      currentIndex = (currentIndex + step + localPlaylist.length) % localPlaylist.length;
+      playIndex(currentIndex);
+    }
+
+    function playRandomTrack() {
+      if (localPlaylist.length === 0) return;
+      currentIndex = Math.floor(Math.random() * localPlaylist.length);
+      playIndex(currentIndex);
+    }
+
+    function setVolume(val) {
+      audio.volume = val;
+    }
+
+    function updatePlayState(isPlaying) {
+      playBtn.innerHTML = isPlaying 
+        ? '<i data-lucide="pause" class="w-5 h-5"></i>' 
+        : '<i data-lucide="play" class="w-5 h-5"></i>';
+      lucide.createIcons();
+    }
+
+    audio.onended = () => skipTrack(1);
   </script>
 </body>
 </html>
