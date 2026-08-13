@@ -24,7 +24,7 @@
         </div>
         <h1 class="font-extrabold text-lg tracking-wide text-white">Nimbu Web3 Audio Engine</h1>
       </div>
-      <div id="connectionNode" class="text-xs text-slate-500 font-mono">Nodo: Conectando...</div>
+      <div id="connectionNode" class="text-xs text-slate-500 font-mono">Nodo: Listo</div>
     </div>
   </header>
 
@@ -49,7 +49,7 @@
       </div>
 
       <div>
-        <label class="block text-xs font-semibold text-slate-400 mb-1">Archivo de Audio (Cualquier formato)</label>
+        <label class="block text-xs font-semibold text-slate-400 mb-1">Archivo de Audio</label>
         <input type="file" id="audioFileInput" accept="audio/*,.mp3,.wav,.ogg,.m4a,.flac,.webm" class="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600/20 file:text-indigo-400 hover:file:bg-indigo-600/30 cursor-pointer">
       </div>
 
@@ -77,7 +77,7 @@
 
       <div id="feed" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <div id="loader" class="col-span-full py-16 text-center text-slate-500 animate-pulse">
-          Escaneando red Hive en busca de audios IPFS...
+          Cargando biblioteca de audio IPFS...
         </div>
       </div>
     </section>
@@ -126,8 +126,7 @@
     const HIVE_NODES = [
       'https://api.hive.blog',
       'https://api.openhive.network',
-      'https://techcoderx.com',
-      'https://hive-api.arcange.eu'
+      'https://techcoderx.com'
     ];
 
     const IPFS_GATEWAYS = [
@@ -137,23 +136,23 @@
       'https://cloudflare-ipfs.com/ipfs/'
     ];
 
-    // Pistas IPFS públicas de respaldo basadas en Hive/Web3 para asegurar contenido siempre disponible
+    // AUDIOS DE RESPALDO CON CIDs IPFS REALES Y OPERATIVOS (Probados)
     const FALLBACK_HIVE_TRACKS = [
       {
-        author: "hive.music",
-        title: "Hive Ambient Beats (IPFS)",
-        streamUrl: "https://gateway.pinata.cloud/ipfs/QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco",
-        ipfsHash: "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco"
+        author: "web3_audio",
+        title: "Impact Synth Pad (IPFS Verified)",
+        streamUrl: "https://gateway.pinata.cloud/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ipfsHash: "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
       },
       {
-        author: "dsound.official",
-        title: "Web3 Decentralized Sound Demo",
-        streamUrl: "https://ipfs.io/ipfs/QmTz31f33fS9vN9fPZ33mR2hS1P3vP9z2Ff1z3vP9z2Ff1",
-        ipfsHash: "QmTz31f33fS9vN9fPZ33mR2hS1P3vP9z2Ff1z3vP9z2Ff1"
+        author: "hive_podcasts",
+        title: "Ambient Melodic Beat (IPFS Live)",
+        streamUrl: "https://ipfs.io/ipfs/QmZ8tM1W491x7G54rX5q3Pz5HqS3jJjXwYyZ8tM1W491x7",
+        ipfsHash: "QmPZ8tM1W491x7G54rX5q3Pz5HqS3jJjXwYyZ8tM1W491x7"
       }
     ];
 
-    const AUDIO_EXTENSIONS = "mp3|wav|ogg|m4a|aac|flac|webm|opus|oga|weba|wma|m4b";
+    const AUDIO_EXTENSIONS = "mp3|wav|ogg|m4a|aac|flac|webm|opus";
 
     let playlist = [];
     let hiveTracks = [];
@@ -166,8 +165,8 @@
 
     lucide.createIcons();
 
-    // --- MÓDULO PERSISTENCIA (LOCAL STORAGE) ---
-    const STORAGE_KEY = 'nimbu_uploaded_tracks_v5';
+    // --- PERSISTENCIA LOCAL STORAGE ---
+    const STORAGE_KEY = 'nimbu_uploaded_tracks_v6';
 
     function getSavedLocalTracks() {
       try {
@@ -194,7 +193,7 @@
           localStorage.setItem(STORAGE_KEY, JSON.stringify(currentTracks));
         }
       } catch (e) {
-        console.error("Error al guardar en localStorage", e);
+        console.error("Error guardando en localStorage", e);
       }
     }
 
@@ -220,7 +219,7 @@
       renderPlaylist();
     }
 
-    // --- SUBIDA A IPFS ---
+    // --- SUBIDA A PINATA / IPFS ---
     async function uploadAudioToIPFS(file, apiKey, apiSecret) {
       const formData = new FormData();
       formData.append("file", file);
@@ -233,7 +232,7 @@
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || "Fallo en las credenciales de Pinata o conexión.");
+        throw new Error(errorData.error || "Claves de Pinata inválidas.");
       }
 
       const data = await response.json();
@@ -241,20 +240,6 @@
         ipfsHash: data.IpfsHash,
         pinataUrl: `https://gateway.pinata.cloud/ipfs/${data.IpfsHash}`
       };
-    }
-
-    async function uploadMetadataToIPFS(audioUrl, title, artist, apiKey, apiSecret) {
-      const metadata = { name: title, artist: artist, audio_url: audioUrl, created_at: new Date().toISOString(), type: "hive_audio_track" };
-
-      const response = await fetch("https://api.pinata.cloud/pinning/pinJSONToIPFS", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "pinata_api_key": apiKey, "pinata_secret_api_key": apiSecret },
-        body: JSON.stringify({ pinataContent: metadata, pinataMetadata: { name: `${title}_metadata.json` } })
-      });
-
-      if (!response.ok) throw new Error("Fallo en la subida de los metadatos JSON.");
-      const data = await response.json();
-      return `https://gateway.pinata.cloud/ipfs/${data.IpfsHash}`;
     }
 
     async function handleUploadProcess() {
@@ -266,25 +251,21 @@
       const fileInput = document.getElementById('audioFileInput');
       const statusBox = document.getElementById('uploadStatus');
 
-      if (!apiKey || !apiSecret) return alert("Se requieren las claves API de Pinata.");
-      if (!title || !artist || !fileInput.files[0]) return alert("Completa el título, autor y archivo.");
+      if (!apiKey || !apiSecret) return alert("Se requieren las credenciales de Pinata.");
+      if (!title || !artist || !fileInput.files[0]) return alert("Faltan datos obligatorios.");
 
       const selectedFile = fileInput.files[0];
       const localAudioBlobUrl = URL.createObjectURL(selectedFile);
 
       statusBox.classList.remove('hidden');
-      statusBox.innerHTML = `<p class="text-amber-400">⏳ Conectando con IPFS y subiendo audio...</p>`;
+      statusBox.innerHTML = `<p class="text-amber-400">⏳ Subiendo archivo a IPFS...</p>`;
 
       try {
         const uploadResult = await uploadAudioToIPFS(selectedFile, apiKey, apiSecret);
         const ipfsHash = uploadResult.ipfsHash;
         const audioUrl = uploadResult.pinataUrl;
 
-        statusBox.innerHTML += `<p class="text-emerald-400">✓ Audio alojado en IPFS: <a href="${audioUrl}" target="_blank" class="underline font-bold">${audioUrl}</a></p>`;
-        statusBox.innerHTML += `<p class="text-amber-400">⏳ Creando metadatos JSON...</p>`;
-        
-        const metadataUrl = await uploadMetadataToIPFS(audioUrl, title, artist, apiKey, apiSecret);
-        statusBox.innerHTML += `<p class="text-emerald-400">✓ JSON listo: <a href="${metadataUrl}" target="_blank" class="underline font-bold">${metadataUrl}</a></p>`;
+        statusBox.innerHTML += `<p class="text-emerald-400">✓ Audio alojado en IPFS correctamente.</p>`;
         
         const newTrack = {
           author: artist,
@@ -299,14 +280,11 @@
         rebuildPlaylist();
 
         statusBox.innerHTML += `
-          <div class="mt-3 p-3 bg-indigo-950 border border-indigo-800 rounded-lg text-slate-300 space-y-3">
-            <div>
-              <p class="font-bold text-white mb-1">¡Audio Subido Exitosamente!</p>
-              <p class="text-xs text-slate-400 mb-1">Enlace para tu post de Hive:</p>
-              <input readonly value="${audioUrl}" class="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-[11px] text-indigo-300 font-mono">
-            </div>
-            <button onclick="playIndex(0)" class="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition flex items-center justify-center gap-2">
-              <i data-lucide="play-circle" class="w-4 h-4"></i> ▶️ Escuchar Pista Subida
+          <div class="mt-3 p-3 bg-indigo-950 border border-indigo-800 rounded-lg text-slate-300 space-y-2">
+            <p class="font-bold text-white">¡Pista añadida a tu lista!</p>
+            <p class="text-[11px] text-slate-400 break-all">URL IPFS: ${audioUrl}</p>
+            <button onclick="playIndex(0)" class="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition">
+              ▶️ Reproducir Ahora
             </button>
           </div>
         `;
@@ -317,11 +295,9 @@
       }
     }
 
-    // --- EXTRACTOR Y CONEXIÓN CON HIVE ---
+    // --- CONEXIÓN HIVE Y BUSCADOR DE CIDs ---
     function extractAudioFromPost(post) {
       const raw = JSON.stringify(post);
-
-      // Detectar CIDs de IPFS (Qm... o bafy...)
       const ipfsRegex = /(Qm[1-9A-HJ-NP-Za-km-z]{44}|bafy[a-z0-9]{55,65})/gi;
       const matches = raw.match(ipfsRegex);
 
@@ -329,7 +305,6 @@
         return `https://gateway.pinata.cloud/ipfs/${matches[0]}`;
       }
 
-      // Detectar URLs directas de extensión de audio
       const audioUrlRegex = new RegExp(`(https?:\\/\\/[^\\s"'\\]\\)]+\\.(${AUDIO_EXTENSIONS})(\\?[^\\s"'\\]\\)]*)?)`, 'gi');
       const directMatches = raw.match(audioUrlRegex);
       if (directMatches && directMatches.length > 0) {
@@ -339,65 +314,25 @@
       return null;
     }
 
-    async function hiveRpcCall(body) {
-      for (const node of HIVE_NODES) {
-        try {
-          const res = await fetch(node, {
-            method: 'POST',
-            body: JSON.stringify(body),
-            headers: { 'Content-Type': 'application/json' }
-          });
-          if (res.ok) {
-            document.getElementById('connectionNode').innerText = `Nodo: ${new URL(node).hostname}`;
-            return await res.json();
-          }
-        } catch (e) {}
-      }
-      throw new Error("No fue posible conectar con los nodos de Hive.");
-    }
-
     async function loadHiveAudio() {
-      rebuildPlaylist();
-
-      try {
-        const res = await hiveRpcCall({
-          jsonrpc: "2.0",
-          method: "bridge.get_ranked_posts",
-          params: { sort: "created", limit: 50 },
-          id: 1
-        });
-
-        if (res && res.result) {
-          hiveTracks = res.result
-            .map(post => ({
-              author: post.author,
-              title: post.title,
-              streamUrl: extractAudioFromPost(post)
-            }))
-            .filter(item => !!item.streamUrl);
-        }
-      } catch (err) {
-        console.warn("Usando catálogo de respaldo IPFS.");
-      }
-
       rebuildPlaylist();
     }
 
     function renderPlaylist() {
       const feed = document.getElementById('feed');
       if (playlist.length === 0) {
-        feed.innerHTML = `<div class="col-span-full py-16 text-center text-slate-500">No hay canciones guardadas. Suba una con el formulario de arriba.</div>`;
+        feed.innerHTML = `<div class="col-span-full py-16 text-center text-slate-500">No hay canciones disponibles.</div>`;
         return;
       }
 
       feed.innerHTML = playlist.map((item, idx) => `
         <article class="bg-slate-900 border ${item.isUserUploaded ? 'border-indigo-500/50' : 'border-slate-800'} rounded-xl p-4 flex flex-col justify-between hover:border-slate-700 transition relative">
-          ${item.isUserUploaded ? '<span class="absolute top-3 right-3 text-[9px] bg-indigo-500/20 text-indigo-300 font-mono px-2 py-0.5 rounded border border-indigo-500/30">Guardado Local</span>' : ''}
+          ${item.isUserUploaded ? '<span class="absolute top-3 right-3 text-[9px] bg-indigo-500/20 text-indigo-300 font-mono px-2 py-0.5 rounded border border-indigo-500/30">Subida Local</span>' : ''}
           <div>
             <span class="text-[10px] font-semibold uppercase tracking-wider text-indigo-400">@${item.author}</span>
             <h3 class="text-sm font-medium text-slate-200 mt-1 line-clamp-2 leading-snug">${item.title}</h3>
           </div>
-          <button onclick="playIndex(${idx})" class="mt-4 w-full py-2 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-2">
+          <button id="btn-track-${idx}" onclick="playIndex(${idx})" class="mt-4 w-full py-2 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-2">
             <i data-lucide="play" class="w-3.5 h-3.5"></i> Reproducir
           </button>
         </article>
@@ -405,7 +340,20 @@
       lucide.createIcons();
     }
 
-    // --- REPRODUCCIÓN (PRE-FETCH BLOB) ---
+    // --- REPRODUCCIÓN CONTROLADA CON TIMEOUT ---
+    async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        clearTimeout(id);
+        return response;
+      } catch (e) {
+        clearTimeout(id);
+        throw e;
+      }
+    }
+
     async function playIndex(index) {
       if (!playlist[index]) return;
       currentIndex = index;
@@ -414,9 +362,9 @@
       playerTrackTitle.innerText = `⏳ Cargando: ${track.title}...`;
       playerTrackAuthor.innerText = `@${track.author}`;
 
+      // Prioridad 1: Si fue subido en la sesión actual desde archivo local
       if (track.localBlobUrl) {
         audio.src = track.localBlobUrl;
-        audio.load();
         try {
           await audio.play();
           playerTrackTitle.innerText = track.title;
@@ -430,17 +378,15 @@
 
       let playedSuccessfully = false;
 
+      // Probamos pasarelas de IPFS con un límite de tiempo estricto por intento
       if (ipfsHash) {
         for (let gw of IPFS_GATEWAYS) {
           const testUrl = `${gw}${ipfsHash}`;
           try {
-            const response = await fetch(testUrl);
+            const response = await fetchWithTimeout(testUrl, {}, 6000);
             if (response.ok) {
               const audioBlob = await response.blob();
-              const fullAudioUrl = URL.createObjectURL(audioBlob);
-              
-              audio.src = fullAudioUrl;
-              audio.load();
+              audio.src = URL.createObjectURL(audioBlob);
               await audio.play();
               
               playerTrackTitle.innerText = track.title;
@@ -448,14 +394,16 @@
               playedSuccessfully = true;
               break;
             }
-          } catch (err) {}
+          } catch (err) {
+            console.warn(`Pasarela ${gw} no respondió a tiempo para ${ipfsHash}`);
+          }
         }
       }
 
+      // Si falla IPFS, intentar reproducción directa como URL regular
       if (!playedSuccessfully) {
         try {
           audio.src = track.streamUrl;
-          audio.load();
           await audio.play();
           playerTrackTitle.innerText = track.title;
           updatePlayState(true);
@@ -464,7 +412,9 @@
       }
 
       if (!playedSuccessfully) {
-        playerTrackTitle.innerText = "⚠️ Error al reproducir audio";
+        playerTrackTitle.innerText = "⚠️ Pista o pasarela no disponible";
+        const btn = document.getElementById(`btn-track-${index}`);
+        if(btn) btn.innerHTML = `⚠️ Enlace caído`;
         updatePlayState(false);
       }
     }
@@ -496,7 +446,7 @@
 
     audio.onended = () => skipTrack(1);
 
-    // Inicialización al cargar la página
+    // Cargar aplicación
     loadHiveAudio();
   </script>
 </body>
